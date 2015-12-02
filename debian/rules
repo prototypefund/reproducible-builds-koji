@@ -12,7 +12,7 @@ override_dh_auto_install:
 
 override_dh_auto_build:
 	dh_auto_build
-	help2man --no-info -n "RPM-based build system client" --version-string=1.10.0 ./cli/koji > debian/koji.1
+	PYTHONPATH=. help2man --no-info -n "RPM-based build system client" --version-string=1.10.0 ./cli/koji > debian/koji.1
 
 override_dh_auto_clean:
 	rm -f debian/koji.1
