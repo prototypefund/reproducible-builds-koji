@@ -1,0 +1,40 @@
+Source: koji
+Section: devel
+Maintainer: Marek Marczykowski-Górecki <marmarek@invisiblethingslab.com>
+Priority: extra
+Standards-Version: 3.9.6
+Build-Depends:
+ debhelper (>= 9.0),
+ dh-python,
+ dh-systemd,
+ help2man,
+ python-all,
+ python-rpm,
+ python-simplejson,
+ python-openssl,
+ python-libxml2,
+ python-libvirt,
+ pkg-config
+Homepage: https://fedorahosted.org/koji/
+#Vcs-Git: git://anonscm.debian.org/users/tzafrir/mock.git
+#Vcs-Browser: http://anoncms.debian.org/gitweb/?p=users/tzafrir/mock.git
+
+Package: koji
+Architecture: all
+Depends: python, ${misc:Depends}, ${python:Depends}
+Description: RPM-based build system
+ The Fedora Project uses Koji for their build system, as do several other
+ projects.
+ .
+ Koji's goal is to provide a flexible, secure, and reproducible way to build
+ software.
+ .
+ Key features:
+ .
+  -  New buildroot for each build
+  -  Robust XML-RPC APIs for easy integration with other tools
+  -  Web interface with SSL and Kerberos authentication
+  -  Thin, portable command line client
+  -  Users can create local buildroots
+  -  Buildroot contents are tracked in the database
+  -  Versioned data 
