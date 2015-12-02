@@ -1,0 +1,23 @@
+#from kojiweb import util
+        </div>
+
+        <p id="footer">
+          Copyright &copy; 2006-2014 Red Hat, Inc.
+          <a href="https://fedorahosted.org/koji/"><img src="$util.themePath('images/powered-by-koji.png')" alt="Powered By Koji" id="PoweredByKojiLogo"/></a>
+        </p>
+
+#set $localfooterpath=$util.themePath("extra-footer.html", local=True)
+#if os.path.exists($localfooterpath)
+#if $literalFooter
+#set $localfooter="".join(open($localfooterpath).readlines())
+#$localfooter
+#else
+#include $localfooterpath
+#end if
+#end if
+
+      </div>
+    </div>
+
+  </body>
+</html>
