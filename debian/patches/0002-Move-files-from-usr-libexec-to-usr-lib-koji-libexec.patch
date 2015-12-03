@@ -1,0 +1,53 @@
+Description: Use Debian FHS paths
+Author: Marek Marczykowski-Górecki <marmarek@invisiblethingslab.com>
+Forwarded: not-needed
+---
+This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
+--- a/builder/Makefile
++++ b/builder/Makefile
+@@ -19,8 +19,8 @@
+ 	mkdir -p $(DESTDIR)/usr/sbin
+ 	install -p -m 755 $(BINFILES) $(DESTDIR)/usr/sbin
+ 
+-	mkdir -p $(DESTDIR)/usr/libexec/kojid
+-	install -p -m 755 $(LIBEXECFILES) $(DESTDIR)/usr/libexec/kojid
++	mkdir -p $(DESTDIR)/usr/lib/koji/libexec/kojid
++	install -p -m 755 $(LIBEXECFILES) $(DESTDIR)/usr/lib/koji/libexec/kojid
+ 
+ 	mkdir -p $(DESTDIR)/etc/mock/koji
+ 
+--- a/builder/kojid
++++ b/builder/kojid
+@@ -4315,7 +4315,7 @@
+             repos.append(ext_url)
+ 
+         blocklist = self.repodir + '/blocklist'
+-        cmd = ['/usr/libexec/kojid/mergerepos', '-a', arch, '-b', blocklist, '-o', self.outdir]
++        cmd = ['/usr/lib/koji/libexec/kojid/mergerepos', '-a', arch, '-b', blocklist, '-o', self.outdir]
+         if os.path.isfile(groupdata):
+             cmd.extend(['-g', groupdata])
+         for repo in repos:
+--- a/hub/Makefile
++++ b/hub/Makefile
+@@ -23,8 +23,8 @@
+ 		exit 1; \
+ 	fi
+ 
+-	mkdir -p $(DESTDIR)/usr/libexec/koji-hub
+-	install -p -m 755 $(LIBEXECFILES) $(DESTDIR)/usr/libexec/koji-hub
++	mkdir -p $(DESTDIR)/usr/lib/koji/libexec/koji-hub
++	install -p -m 755 $(LIBEXECFILES) $(DESTDIR)/usr/lib/koji/libexec/koji-hub
+ 
+ 	mkdir -p $(DESTDIR)/etc/httpd/conf.d
+ 	install -p -m 644 httpd.conf $(DESTDIR)/etc/httpd/conf.d/kojihub.conf
+--- a/hub/kojihub.py
++++ b/hub/kojihub.py
+@@ -7061,7 +7061,7 @@
+         # ignore differences in file size, md5sum, and mtime
+         # (files may have been generated at build time and contain
+         #  embedded dates or other insignificant differences)
+-        args = ['/usr/libexec/koji-hub/rpmdiff',
++        args = ['/usr/lib/koji/libexec/koji-hub/rpmdiff',
+                 '--ignore', 'S', '--ignore', '5',
+                 '--ignore', 'T',
+                 os.path.join(basepath, first_rpm),

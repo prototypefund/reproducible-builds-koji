@@ -1,6 +1,6 @@
 /lib/systemd/system/
 /usr/lib/koji-hub-plugins/
-/usr/libexec
+/usr/lib/koji/libexec
 /usr/sbin
 /etc/kojivmd/
 /etc/httpd/
