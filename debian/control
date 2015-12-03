@@ -1,6 +1,8 @@
 Source: koji
 Section: devel
-Maintainer: Marek Marczykowski-Górecki <marmarek@invisiblethingslab.com>
+Maintainer: Reproducible Builds Maintainers <reproducible-builds@lists.alioth.debian.org>
+Uploaders: Marek Marczykowski-Górecki <marmarek@invisiblethingslab.com>,
+ Ximin Luo <infinity0@debian.org>
 Priority: extra
 Standards-Version: 3.9.6
 Build-Depends:
@@ -20,8 +22,8 @@ Build-Depends:
  systemd,
  yum
 Homepage: https://fedorahosted.org/koji/
-#Vcs-Git: git://anonscm.debian.org/users/tzafrir/mock.git
-#Vcs-Browser: http://anoncms.debian.org/gitweb/?p=users/tzafrir/mock.git
+Vcs-Git: https://anonscm.debian.org/git/reproducible/koji.git
+Vcs-Browser: https://anonscm.debian.org/cgit/reproducible/koji.git
 
 Package: koji
 Architecture: all
