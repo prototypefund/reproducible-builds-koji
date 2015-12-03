@@ -1,0 +1,3 @@
+/etc/koji.conf
+/etc/koji.conf.d/
+/usr/bin/koji

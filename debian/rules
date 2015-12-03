@@ -1,14 +1,7 @@
 #!/usr/bin/make -f
 
-export PYBUILD_NAME=koji
-export PYBUILD_SYSTEM=custom
-export DH_VERBOSE=1
-
 %:
-	dh $@ --with python2 --buildsystem=pybuild
-
-override_dh_auto_install:
-	dh_auto_install -S makefile
+	dh $@ --with python2
 
 override_dh_auto_build:
 	dh_auto_build
@@ -16,5 +9,15 @@ override_dh_auto_build:
 
 override_dh_auto_clean:
 	rm -f debian/koji.1
-	rm -f vm/kojikamid
 	dh_auto_clean
+
+override_dh_install:
+	dh_install --fail-missing
+
+override_dh_python2:
+	dh_python2 -p koji-common
+	dh_python2 -p koji-client
+	dh_python2 -p koji-servers /usr/lib/koji-hub-plugins/
+	dh_python2 -p koji-servers /usr/share/koji-hub/
+	dh_python2 -p koji-servers /usr/share/koji-web/
+	dh_python2 -p koji-servers /usr/share/koji-web/lib/kojiweb/

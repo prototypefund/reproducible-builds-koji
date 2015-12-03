@@ -1,37 +1,33 @@
 Source: koji
-Section: devel
 Maintainer: Reproducible Builds Maintainers <reproducible-builds@lists.alioth.debian.org>
 Uploaders: Marek Marczykowski-Górecki <marmarek@invisiblethingslab.com>,
  Ximin Luo <infinity0@debian.org>
+Section: devel
 Priority: extra
 Standards-Version: 3.9.6
 Build-Depends:
  debhelper (>= 9.0),
  dh-python,
  dh-systemd,
- createrepo,
  help2man,
  pkg-config,
  python-all,
- python-cheetah,
- python-libxml2,
- python-libvirt,
- python-kerberos,
  python-openssl,
- python-qpid,
- python-rpm,
- python-simplejson,
- python-urlgrabber,
+ rpm,
  systemd,
- yum
+ yum,
 Homepage: https://fedorahosted.org/koji/
 Vcs-Git: https://anonscm.debian.org/git/reproducible/koji.git
 Vcs-Browser: https://anonscm.debian.org/cgit/reproducible/koji.git
 
-Package: koji
+Package: koji-common
 Architecture: all
-Depends: python, ${misc:Depends}, ${python:Depends}
-Description: RPM-based build system
+Section: python
+Depends: ${misc:Depends}, ${python:Depends},
+#python-krbV,
+ python-openssl,
+ python-rpm,
+Description: RPM-based build system - common library
  The Fedora Project uses Koji for their build system, as do several other
  projects.
  .
@@ -46,4 +42,70 @@ Description: RPM-based build system
   -  Thin, portable command line client
   -  Users can create local buildroots
   -  Buildroot contents are tracked in the database
-  -  Versioned data 
+  -  Versioned data
+ .
+ This package contains the common Python library used by other components.
+
+Package: koji-client
+Architecture: all
+Depends: python, ${misc:Depends}, ${python:Depends}, koji-common (= ${binary:Version}),
+ python-urlgrabber,
+ yum,
+Description: RPM-based build system - client
+ The Fedora Project uses Koji for their build system, as do several other
+ projects.
+ .
+ Koji's goal is to provide a flexible, secure, and reproducible way to build
+ software.
+ .
+ Key features:
+ .
+  -  New buildroot for each build
+  -  Robust XML-RPC APIs for easy integration with other tools
+  -  Web interface with SSL and Kerberos authentication
+  -  Thin, portable command line client
+  -  Users can create local buildroots
+  -  Buildroot contents are tracked in the database
+  -  Versioned data
+ .
+ This package contains the koji client that queries remote build systems as
+ well as perform actions such as adding users and initiating build requests.
+
+Package: koji-servers
+Architecture: all
+Depends: python, ${misc:Depends}, ${python:Depends}, koji-common (= ${binary:Version}),
+ createrepo,
+ python-cheetah,
+#python-krbV,
+ python-libvirt,
+ python-libxml2,
+ python-qpid,
+ python-rpm,
+ python-simplejson,
+ python-urlgrabber,
+ yum,
+Description: RPM-based build system - server components
+ The Fedora Project uses Koji for their build system, as do several other
+ projects.
+ .
+ Koji's goal is to provide a flexible, secure, and reproducible way to build
+ software.
+ .
+ Key features:
+ .
+  -  New buildroot for each build
+  -  Robust XML-RPC APIs for easy integration with other tools
+  -  Web interface with SSL and Kerberos authentication
+  -  Thin, portable command line client
+  -  Users can create local buildroots
+  -  Buildroot contents are tracked in the database
+  -  Versioned data
+ .
+ This package contains the server components of the koji build system.
+ .
+  - koji-hub, the center of all Koji operations. It is an XML-RPC server
+    running under mod_wsgi in Apache.
+  - kojid is the build daemon that runs on each of the build machines.
+  - koji-web is a set of scripts that run in mod_wsgi and use the Cheetah
+    templating engine to provide a web interface to Koji.
+  - kojira is a daemon that keeps the build root repodata updated.

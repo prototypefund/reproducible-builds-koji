@@ -1,0 +1,16 @@
+/lib/systemd/system/
+/usr/lib/koji-hub-plugins/
+/usr/libexec
+/usr/sbin
+/etc/kojivmd/
+/etc/httpd/
+/etc/kojira/
+/etc/koji-hub/
+/etc/koji-shadow/
+/etc/mock/koji/
+/etc/kojid/
+/etc/kojiweb/
+/etc/koji-gc/
+/usr/share/kojivmd/
+/usr/share/koji-hub/
+/usr/share/koji-web/
