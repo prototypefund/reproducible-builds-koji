@@ -1,5 +1,5 @@
 koji (1.10.0-1) UNRELEASED; urgency=medium
 
-  * Initial release. (Closes: #XXXXXX)
+  * Initial release. (Closes: #806953)
 
  -- Marek Marczykowski-Górecki <marmarek@invisiblethingslab.com>  Wed, 02 Dec 2015 15:30:19 +0100
