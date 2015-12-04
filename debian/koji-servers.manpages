@@ -1,0 +1,5 @@
+debian/koji-gc.1
+debian/koji-shadow.1
+debian/kojid.1
+debian/kojira.1
+debian/kojivmd.1

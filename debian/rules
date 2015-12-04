@@ -1,14 +1,23 @@
 #!/usr/bin/make -f
 
+include /usr/share/dpkg/default.mk
+
+H2M = PYTHONPATH=. help2man --no-info --version-string=$(DEB_VERSION_UPSTREAM)
+
 %:
 	dh $@ --with python2
 
 override_dh_auto_build:
 	dh_auto_build
-	PYTHONPATH=. help2man --no-info -n "RPM-based build system client" --version-string=1.10.0 ./cli/koji > debian/koji.1
+	$(H2M) -n "Koji build client" ./cli/koji > debian/koji.1
+	$(H2M) -n "Koji build daemon" ./builder/kojid > debian/kojid.1
+	$(H2M) -n "Garbage collection tool for Koji" ./util/koji-gc > debian/koji-gc.1
+	$(H2M) -n "Shadow builds between koji instances" ./util/koji-shadow > debian/koji-shadow.1
+	$(H2M) -n "Koji repository administrator" ./util/kojira > debian/kojira.1
+	$(H2M) -n "Koji virtual machine management daemon" ./vm/kojivmd > debian/kojivmd.1
 
 override_dh_auto_clean:
-	rm -f debian/koji.1
+	rm -f debian/koji*.1
 	dh_auto_clean
 
 override_dh_install:

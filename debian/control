@@ -9,10 +9,18 @@ Build-Depends:
  debhelper (>= 9.0),
  dh-python,
  dh-systemd,
+ createrepo,
  help2man,
  pkg-config,
  python-all,
+ python-cheetah,
+ python-libvirt,
+ python-libxml2,
  python-openssl,
+ python-qpid,
+ python-rpm,
+ python-simplejson,
+ python-urlgrabber,
  rpm,
  systemd,
  yum,
@@ -84,6 +92,8 @@ Depends: python, ${misc:Depends}, ${python:Depends}, koji-common (= ${binary:Ver
  python-simplejson,
  python-urlgrabber,
  yum,
+Recommends: httpd
+Suggests: systemd
 Description: RPM-based build system - server components
  The Fedora Project uses Koji for their build system, as do several other
  projects.
