@@ -1,5 +1,6 @@
-koji (1.10.0-1) UNRELEASED; urgency=medium
+koji (1.10.0-1) unstable; urgency=medium
 
+  [ Marek Marczykowski-Górecki ]
   * Initial release. (Closes: #806953)
 
- -- Marek Marczykowski-Górecki <marmarek@invisiblethingslab.com>  Wed, 02 Dec 2015 15:30:19 +0100
+ -- Ximin Luo <infinity0@debian.org>  Fri, 04 Dec 2015 11:20:57 +0100
