@@ -9,12 +9,12 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 @@ -1,6 +1,7 @@
  NAME=koji
  SPECFILE = $(firstword $(wildcard *.spec))
- SUBDIRS = hub builder koji cli docs util www plugins vm
+ SUBDIRS = hub builder koji cli util www plugins vm
 +SYSTEMDSYSTEMUNITDIR = $(shell pkg-config systemd --variable=systemdsystemunitdir)
  
  ifdef DIST
  DIST_DEFINES := --define "dist $(DIST)"
-@@ -116,4 +117,5 @@
+@@ -149,4 +150,5 @@
  	mkdir -p $(DESTDIR)
  
  	for d in $(SUBDIRS); do make DESTDIR=`cd $(DESTDIR); pwd` \
