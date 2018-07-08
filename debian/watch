@@ -1,2 +1,2 @@
 version=3
-https://fedorahosted.org/released/koji/koji-(.+).tar.bz2
+https://releases.pagure.org/koji/koji-(.+).tar.bz2
