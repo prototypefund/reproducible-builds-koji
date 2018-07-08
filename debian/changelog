@@ -1,8 +1,8 @@
-koji (1.16.0-2) UNRELEASED; urgency=medium
+koji (1.16.0-2) unstable; urgency=medium
 
   * Install a conf file for fedora's current main koji hub.
 
- -- Ximin Luo <infinity0@debian.org>  Sun, 08 Jul 2018 12:29:16 -0700
+ -- Ximin Luo <infinity0@debian.org>  Sun, 08 Jul 2018 12:37:16 -0700
 
 koji (1.16.0-1) unstable; urgency=medium
 
