@@ -3,28 +3,35 @@ Maintainer: Reproducible Builds Maintainers <reproducible-builds@lists.alioth.de
 Uploaders: Marek Marczykowski-Górecki <marmarek@invisiblethingslab.com>,
  Ximin Luo <infinity0@debian.org>
 Section: devel
-Priority: extra
-Standards-Version: 3.9.6
+Priority: optional
+Standards-Version: 4.1.5
 Build-Depends:
- debhelper (>= 9.0),
+ debhelper (>= 9.20160709),
  dh-python,
- dh-systemd,
  createrepo,
  help2man,
  pkg-config,
  python-all,
  python-cheetah,
+ python-dateutil,
  python-libvirt,
  python-libxml2,
  python-openssl,
  python-qpid,
+ python-requests,
+ python-requests-kerberos,
  python-rpm,
  python-simplejson,
- python-urlgrabber,
+ python-six,
+ python-nose <!nocheck>,
+ python-mock <!nocheck>,
+ python-qpid-proton <!nocheck>,
+ python-krbv <!nocheck>,
+ python-psycopg2 <!nocheck>,
  rpm,
  systemd,
  yum,
-Homepage: https://fedorahosted.org/koji/
+Homepage: https://pagure.io/koji
 Vcs-Git: https://salsa.debian.org/reproducible-builds/koji.git
 Vcs-Browser: https://salsa.debian.org/reproducible-builds/koji
 
@@ -32,7 +39,7 @@ Package: koji-common
 Architecture: all
 Section: python
 Depends: ${misc:Depends}, ${python:Depends},
-#python-krbV,
+ python-krbv,
  python-openssl,
  python-rpm,
 Description: RPM-based build system - common library
@@ -57,7 +64,6 @@ Description: RPM-based build system - common library
 Package: koji-client
 Architecture: all
 Depends: python, ${misc:Depends}, ${python:Depends}, koji-common (= ${binary:Version}),
- python-urlgrabber,
  yum,
 Description: RPM-based build system - client
  The Fedora Project uses Koji for their build system, as do several other
@@ -84,13 +90,12 @@ Architecture: all
 Depends: python, ${misc:Depends}, ${python:Depends}, koji-common (= ${binary:Version}),
  createrepo,
  python-cheetah,
-#python-krbV,
+ python-krbv,
  python-libvirt,
  python-libxml2,
  python-qpid,
  python-rpm,
  python-simplejson,
- python-urlgrabber,
  yum,
 Recommends: httpd
 Suggests: systemd

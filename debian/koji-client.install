@@ -1,3 +1,5 @@
 /etc/koji.conf
 /etc/koji.conf.d/
 /usr/bin/koji
+/usr/lib/python2.7/site-packages/koji_cli_plugins/
+/usr/lib/python2.7/site-packages/koji_cli/

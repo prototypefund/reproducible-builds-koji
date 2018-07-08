@@ -16,12 +16,20 @@ override_dh_auto_build:
 	$(H2M) -n "Koji repository administrator" ./util/kojira > debian/kojira.1
 	$(H2M) -n "Koji virtual machine management daemon" ./vm/kojivmd > debian/kojivmd.1
 
+override_dh_auto_test:
+# see Makefile "test" target, we rm coverage stuff because it requires lots of pointless JS
+ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
+	PYTHONPATH=hub/.:plugins/hub/.:plugins/builder/.:plugins/cli/.:cli/.:www/lib /usr/bin/nosetests
+endif
+
 override_dh_auto_clean:
 	rm -f debian/koji*.1
 	dh_auto_clean
 
 override_dh_install:
-	dh_install --fail-missing
+	find debian/tmp -name '*.pyc' -delete
+	dh_install
+	dh_missing --fail-missing
 
 override_dh_python2:
 	dh_python2 -p koji-common

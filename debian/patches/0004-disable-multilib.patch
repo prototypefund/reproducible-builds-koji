@@ -1,0 +1,19 @@
+--- a/builder/kojid
++++ b/builder/kojid
+@@ -37,7 +37,7 @@
+ from koji.daemon import incremental_upload, log_output, TaskManager, SCM
+ from koji.tasks import ServerExit, ServerRestart, BaseTaskHandler, MultiPlatformTask
+ from koji.util import parseStatus, isSuccess, dslice, dslice_ex
+-import multilib.multilib as multilib
++#import multilib.multilib as multilib
+ import os
+ import pwd
+ import grp
+@@ -5336,6 +5336,7 @@
+                     % parseStatus(status, ' '.join(cmd)))
+ 
+     def do_multilib(self, arch, ml_arch, conf):
++        raise RuntimeError("multilib is not yet supported when running kojid on Debian, patches welcome")
+         repodir = koji.pathinfo.distrepo(self.rinfo['id'], self.rinfo['tag_name'])
+         mldir = os.path.join(repodir, koji.canonArch(ml_arch))
+         ml_true = set()  # multilib packages we need to include before depsolve
