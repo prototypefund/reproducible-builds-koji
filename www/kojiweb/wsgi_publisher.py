@@ -30,7 +30,7 @@ import sys
 import traceback
 
 from ConfigParser import RawConfigParser
-from koji.server import WSGIWrapper, ServerError, ServerRedirect
+from koji.server import ServerError, ServerRedirect
 from koji.util import dslice
 
 
@@ -75,9 +75,10 @@ class Dispatcher(object):
         ['WebKeytab', 'string', '/etc/httpd.keytab'],
         ['WebCCache', 'string', '/var/tmp/kojiweb.ccache'],
         ['KrbService', 'string', 'host'],
+        ['KrbRDNS', 'boolean', True],
+        ['KrbCanonHost', 'boolean', False],
 
         ['WebCert', 'string', None],
-        ['ClientCA', 'string', '/etc/kojiweb/clientca.crt'],
         ['KojiHubCA', 'string', '/etc/kojiweb/kojihubca.crt'],
 
         ['PythonDebug', 'boolean', False],
@@ -86,10 +87,16 @@ class Dispatcher(object):
 
         ['Secret', 'string', None],
 
+        ['LoginDisabled', 'boolean', False],
+
         ['LibPath', 'string', '/usr/share/koji-web/lib'],
 
         ['LogLevel', 'string', 'WARNING'],
         ['LogFormat', 'string', '%(msecs)d [%(levelname)s] m=%(method)s u=%(user_name)s p=%(process)s r=%(remoteaddr)s %(name)s: %(message)s'],
+
+        ['Tasks', 'list', []],
+        ['ToplevelTasks', 'list', []],
+        ['ParentTasks', 'list', []],
 
         ['RLIMIT_AS', 'string', None],
         ['RLIMIT_CORE', 'string', None],
@@ -116,17 +123,8 @@ class Dispatcher(object):
             - all PythonOptions (except koji.web.ConfigFile) are now deprecated and
               support for them will disappear in a future version of Koji
         """
-        modpy_opts = environ.get('modpy.opts', {})
-        if 'modpy.opts' in environ:
-            cf = modpy_opts.get('koji.web.ConfigFile', None)
-            cfdir =  modpy_opts.get('koji.web.ConfigDir', None)
-            # to aid in the transition from PythonOptions to web.conf, we do
-            # not check the config file by default, it must be configured
-            if not cf and not cfdir:
-                self.logger.warn('Warning: configuring Koji via PythonOptions is deprecated. Use web.conf')
-        else:
-            cf = environ.get('koji.web.ConfigFile', '/etc/kojiweb/web.conf')
-            cfdir = environ.get('koji.web.ConfigDir', '/etc/kojiweb/web.conf.d')
+        cf = environ.get('koji.web.ConfigFile', '/etc/kojiweb/web.conf')
+        cfdir = environ.get('koji.web.ConfigDir', '/etc/kojiweb/web.conf.d')
         if cfdir:
             configs = koji.config_directory_contents(cfdir)
         else:
@@ -136,38 +134,23 @@ class Dispatcher(object):
         if configs:
             config = RawConfigParser()
             config.read(configs)
-        elif modpy_opts:
-            # presumably we are configured by modpy options
-            config = None
         else:
-            raise koji.GenericError, "Configuration missing"
+            raise koji.GenericError("Configuration missing")
 
         opts = {}
         for name, dtype, default in self.cfgmap:
-            if config:
-                key = ('web', name)
-                if config.has_option(*key):
-                    if dtype == 'integer':
-                        opts[name] = config.getint(*key)
-                    elif dtype == 'boolean':
-                        opts[name] = config.getboolean(*key)
-                    else:
-                        opts[name] = config.get(*key)
+            key = ('web', name)
+            if config and config.has_option(*key):
+                if dtype == 'integer':
+                    opts[name] = config.getint(*key)
+                elif dtype == 'boolean':
+                    opts[name] = config.getboolean(*key)
+                elif dtype == 'list':
+                    opts[name] = [x.strip() for x in config.get(*key).split(',')]
                 else:
-                    opts[name] = default
+                    opts[name] = config.get(*key)
             else:
-                if modpy_opts.get(name, None) is not None:
-                    if dtype == 'integer':
-                        opts[name] = int(modpy_opts.get(name))
-                    elif dtype == 'boolean':
-                        opts[name] = modpy_opts.get(name).lower() in ('yes', 'on', 'true', '1')
-                    else:
-                        opts[name] = modpy_opts.get(name)
-                else:
-                    opts[name] = default
-        if 'modpy.conf' in environ:
-            debug = environ['modpy.conf'].get('PythonDebug', '0').lower()
-            opts['PythonDebug'] = (debug in ['yes', 'on', 'true', '1'])
+                opts[name] = default
         opts['Secret'] = koji.util.HiddenValue(opts['Secret'])
         self.options = opts
         return opts
@@ -190,7 +173,7 @@ class Dispatcher(object):
                 level = part
                 default = level
             if level not in valid_levels:
-                raise koji.GenericError, "Invalid log level: %s" % level
+                raise koji.GenericError("Invalid log level: %s" % level)
             #all our loggers start with koji
             if name == '':
                 name = 'koji'
@@ -403,7 +386,7 @@ class Dispatcher(object):
             start_response(status, headers)
             return result
         headers = {
-            'allow' : ('Allow', 'GET, POST, HEAD'),
+            'allow': ('Allow', 'GET, POST, HEAD'),
         }
         extra = []
         for name, value in environ.get('koji.headers', []):
@@ -423,11 +406,6 @@ class Dispatcher(object):
         if isinstance(result, basestring):
             result = [result]
         return result
-
-    def handler(self, req):
-        """mod_python handler"""
-        wrapper = WSGIWrapper(req)
-        return wrapper.run(self.application)
 
     def application(self, environ, start_response):
         """wsgi handler"""
@@ -475,7 +453,6 @@ class HubFormatter(logging.Formatter):
         return logging.Formatter.format(self, record)
 
 
-# provide necessary global handlers for mod_wsgi and mod_python
+# provide necessary global handlers for mod_wsgi
 dispatcher = Dispatcher()
-handler = dispatcher.handler
 application = dispatcher.application

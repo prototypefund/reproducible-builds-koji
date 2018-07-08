@@ -19,18 +19,15 @@
 #       Mike McLean <mikem@redhat.com>
 
 from ConfigParser import RawConfigParser
+import datetime
 import inspect
 import logging
 import os
 import sys
 import time
 import traceback
-import types
 import pprint
 import resource
-import xmlrpclib
-from xmlrpclib import getparser,dumps,Fault
-from koji.server import WSGIWrapper
 
 import koji
 import koji.auth
@@ -38,23 +35,20 @@ import koji.db
 import koji.plugin
 import koji.policy
 import koji.util
+# import xmlrpclib functions from koji to use tweaked Marshaller
+from koji.xmlrpcplus import getparser, dumps, Fault, ExtendedMarshaller
 from koji.context import context
 
 
-# Workaround to allow xmlrpclib deal with iterators
-class Marshaller(xmlrpclib.Marshaller):
+class Marshaller(ExtendedMarshaller):
 
-    dispatch = xmlrpclib.Marshaller.dispatch.copy()
+    dispatch = ExtendedMarshaller.dispatch.copy()
 
-    def dump_generator(self, value, write):
-        dump = self.__dump
-        write("<value><array><data>\n")
-        for v in value:
-            dump(v, write)
-        write("</data></array></value>\n")
-    dispatch[types.GeneratorType] = dump_generator
-
-xmlrpclib.Marshaller = Marshaller
+    def dump_datetime(self, value, write):
+        # For backwards compatibility, we return datetime objects as strings
+        value = value.isoformat(' ')
+        self.dump_string(value, write)
+    dispatch[datetime.datetime] = dump_datetime
 
 
 class HandlerRegistry(object):
@@ -69,7 +63,7 @@ class HandlerRegistry(object):
         self.register_function(self.system_methodHelp, name="system.methodHelp")
         self.argspec_cache = {}
 
-    def register_function(self, function, name = None):
+    def register_function(self, function, name=None):
         if name is None:
             name = function.__name__
         self.funcs[name] = function
@@ -91,10 +85,10 @@ class HandlerRegistry(object):
             if not callable(function):
                 continue
             if prefix is not None:
-                name = "%s.%s" %(prefix,name)
+                name = "%s.%s" %(prefix, name)
             self.register_function(function, name=name)
 
-    def register_instance(self,instance):
+    def register_instance(self, instance):
         self.register_module(instance)
 
     def register_plugin(self, plugin):
@@ -103,7 +97,7 @@ class HandlerRegistry(object):
         Handlers are functions marked with one of the decorators defined in koji.plugin
         """
         for v in vars(plugin).itervalues():
-            if isinstance(v, (types.ClassType, types.TypeType)):
+            if isinstance(v, type):
                 #skip classes
                 continue
             if callable(v):
@@ -135,7 +129,7 @@ class HandlerRegistry(object):
 
     def list_api(self):
         funcs = []
-        for name,func in self.funcs.items():
+        for name, func in self.funcs.items():
             #the keys in self.funcs determine the name of the method as seen over xmlrpc
             #func.__name__ might differ (e.g. for dotted method names)
             args = self._getFuncArgs(func)
@@ -178,7 +172,7 @@ class HandlerRegistry(object):
     def get(self, name):
         func = self.funcs.get(name, None)
         if func is None:
-            raise koji.GenericError, "Invalid method: %s" % name
+            raise koji.GenericError("Invalid method: %s" % name)
         return func
 
 
@@ -196,7 +190,7 @@ class HandlerAccess(object):
 
 
 class ModXMLRPCRequestHandler(object):
-    """Simple XML-RPC handler for mod_python environment"""
+    """Simple XML-RPC handler for mod_wsgi environment"""
 
     def __init__(self, handlers):
         self.traceback = False
@@ -221,7 +215,7 @@ class ModXMLRPCRequestHandler(object):
                 break
             rlen += len(chunk)
             if maxlen and rlen > maxlen:
-                raise koji.GenericError, 'Request too long'
+                raise koji.GenericError('Request too long')
             parser.feed(chunk)
         parser.close()
         return unmarshaller.close(), unmarshaller.getmethodname()
@@ -234,16 +228,16 @@ class ModXMLRPCRequestHandler(object):
             response = handler(environ)
             # wrap response in a singleton tuple
             response = (response,)
-            response = dumps(response, methodresponse=1, allow_none=1)
-        except Fault, fault:
+            response = dumps(response, methodresponse=1, marshaller=Marshaller)
+        except Fault as fault:
             self.traceback = True
-            response = dumps(fault)
+            response = dumps(fault, marshaller=Marshaller)
         except:
             self.traceback = True
             # report exception back to server
             e_class, e = sys.exc_info()[:2]
-            faultCode = getattr(e_class,'faultCode',1)
-            tb_type = context.opts.get('KojiTraceback',None)
+            faultCode = getattr(e_class, 'faultCode', 1)
+            tb_type = context.opts.get('KojiTraceback', None)
             tb_str = ''.join(traceback.format_exception(*sys.exc_info()))
             if issubclass(e_class, koji.GenericError):
                 if context.opts.get('KojiDebug'):
@@ -259,9 +253,9 @@ class ModXMLRPCRequestHandler(object):
                 elif tb_type == "extended":
                     faultString = koji.format_exc_plus()
                 else:
-                    faultString = "%s: %s" % (e_class,e)
+                    faultString = "%s: %s" % (e_class, e)
             self.logger.warning(tb_str)
-            response = dumps(Fault(faultCode, faultString))
+            response = dumps(Fault(faultCode, faultString), marshaller=Marshaller)
 
         return response
 
@@ -277,7 +271,7 @@ class ModXMLRPCRequestHandler(object):
         return self._dispatch(method, params)
 
     def check_session(self):
-        if not hasattr(context,"session"):
+        if not hasattr(context, "session"):
             #we may be called again by one of our meta-calls (like multiCall)
             #so we should only create a session if one does not already exist
             context.session = koji.auth.Session()
@@ -285,14 +279,14 @@ class ModXMLRPCRequestHandler(object):
                 context.session.validate()
             except koji.AuthLockError:
                 #might be ok, depending on method
-                if context.method not in ('exclusiveSession','login', 'krbLogin', 'logout'):
+                if context.method not in ('exclusiveSession', 'login', 'krbLogin', 'logout'):
                     raise
 
     def enforce_lockout(self):
         if context.opts.get('LockOut') and \
             context.method not in ('login', 'krbLogin', 'sslLogin', 'logout') and \
             not context.session.hasPerm('admin'):
-            raise koji.ServerOffline, "Server disabled for maintenance"
+            raise koji.ServerOffline("Server disabled for maintenance")
 
     def _dispatch(self, method, params):
         func = self._get_handler(method)
@@ -329,7 +323,7 @@ class ModXMLRPCRequestHandler(object):
         for call in calls:
             try:
                 result = self._dispatch(call['methodName'], call['params'])
-            except Fault, fault:
+            except Fault as fault:
                 results.append({'faultCode': fault.faultCode, 'faultString': fault.faultString})
             except:
                 # transform unknown exceptions into XML-RPC Faults
@@ -344,9 +338,13 @@ class ModXMLRPCRequestHandler(object):
             else:
                 results.append([result])
 
+            # subsequent calls should not recycle event ids
+            if hasattr(context, 'event_id'):
+                del context.event_id
+
         return results
 
-    def handle_request(self,req):
+    def handle_request(self, req):
         """Handle a single XML-RPC request"""
 
         pass
@@ -383,21 +381,8 @@ def load_config(environ):
     """
     logger = logging.getLogger("koji")
     #get our config file(s)
-    if 'modpy.opts' in environ:
-        modpy_opts = environ.get('modpy.opts')
-        cf = modpy_opts.get('ConfigFile', None)
-        # to aid in the transition from PythonOptions to hub.conf, we only load
-        # the configfile if it is explicitly configured
-        if cf == '/etc/koji-hub/hub.conf':
-            cfdir =  modpy_opts.get('ConfigDir', '/etc/koji-hub/hub.conf.d')
-        else:
-            cfdir =  modpy_opts.get('ConfigDir', None)
-        if not cf and not cfdir:
-            logger.warn('Warning: configuring Koji via PythonOptions is deprecated. Use hub.conf')
-    else:
-        cf = environ.get('koji.hub.ConfigFile', '/etc/koji-hub/hub.conf')
-        cfdir = environ.get('koji.hub.ConfigDir', '/etc/koji-hub/hub.conf.d')
-        modpy_opts = {}
+    cf = environ.get('koji.hub.ConfigFile', '/etc/koji-hub/hub.conf')
+    cfdir = environ.get('koji.hub.ConfigDir', '/etc/koji-hub/hub.conf.d')
     if cfdir:
         configs = koji.config_directory_contents(cfdir)
     else:
@@ -415,6 +400,7 @@ def load_config(environ):
         ['DBUser', 'string', None],
         ['DBHost', 'string', None],
         ['DBhost', 'string', None],   # alias for backwards compatibility
+        ['DBPort', 'integer', None],
         ['DBPass', 'string', None],
         ['KojiDir', 'string', None],
 
@@ -425,6 +411,8 @@ def load_config(environ):
 
         ['DNUsernameComponent', 'string', 'CN'],
         ['ProxyDNs', 'string', ''],
+
+        ['CheckClientIP', 'boolean', True],
 
         ['LoginCreatesUser', 'boolean', True],
         ['KojiWebURL', 'string', 'http://localhost.localdomain/koji'],
@@ -446,7 +434,6 @@ def load_config(environ):
         ['MissingPolicyOk', 'boolean', True],
         ['EnableMaven', 'boolean', False],
         ['EnableWin', 'boolean', False],
-        ['EnableImageMigration', 'boolean', False],
 
         ['RLIMIT_AS', 'string', None],
         ['RLIMIT_CORE', 'string', None],
@@ -469,27 +456,16 @@ def load_config(environ):
     ]
     opts = {}
     for name, dtype, default in cfgmap:
-        if config:
-            key = ('hub', name)
-            if config.has_option(*key):
-                if dtype == 'integer':
-                    opts[name] = config.getint(*key)
-                elif dtype == 'boolean':
-                    opts[name] = config.getboolean(*key)
-                else:
-                    opts[name] = config.get(*key)
+        key = ('hub', name)
+        if config and config.has_option(*key):
+            if dtype == 'integer':
+                opts[name] = config.getint(*key)
+            elif dtype == 'boolean':
+                opts[name] = config.getboolean(*key)
             else:
-                opts[name] = default
-        else:
-            if modpy_opts.get(name, None) is not None:
-                if dtype == 'integer':
-                    opts[name] = int(modpy_opts.get(name))
-                elif dtype == 'boolean':
-                    opts[name] = modpy_opts.get(name).lower() in ('yes', 'on', 'true', '1')
-                else:
-                    opts[name] = modpy_opts.get(name)
-            else:
-                opts[name] = default
+                opts[name] = config.get(*key)
+            continue
+        opts[name] = default
     if opts['DBHost'] is None:
         opts['DBHost'] = opts['DBhost']
     # load policies
@@ -526,27 +502,33 @@ def load_plugins(opts):
     return tracker
 
 _default_policies = {
-    'build_from_srpm' : '''
+    'build_from_srpm': '''
             has_perm admin :: allow
             all :: deny
             ''',
-    'build_from_repo_id' : '''
+    'build_from_repo_id': '''
             has_perm admin :: allow
             all :: deny
             ''',
-    'package_list' : '''
+    'package_list': '''
             has_perm admin :: allow
             all :: deny
             ''',
-    'channel' : '''
+    'channel': '''
             has req_channel :: req
             is_child_task :: parent
             all :: use default
             ''',
-    'vm' : '''
+    'vm': '''
             has_perm admin win-admin :: allow
             all :: deny
-           '''
+           ''',
+    'cg_import': '''
+            all :: allow
+            ''',
+    'volume': '''
+            all :: DEFAULT
+            ''',
 }
 
 def get_policy(opts, plugins):
@@ -556,7 +538,10 @@ def get_policy(opts, plugins):
     alltests = [koji.policy.findSimpleTests([vars(kojihub), vars(koji.policy)])]
     # we delay merging these to allow a test to be overridden for a specific policy
     for plugin_name in opts.get('Plugins', '').split():
-        alltests.append(koji.policy.findSimpleTests(vars(plugins.get(plugin_name))))
+        plugin = plugins.get(plugin_name)
+        if not plugin:
+            continue
+        alltests.append(koji.policy.findSimpleTests(vars(plugin)))
     policy = {}
     for pname, text in opts['policy'].iteritems():
         #filter/merge tests
@@ -630,7 +615,7 @@ def setup_logging2(opts):
             level = part
             default = level
         if level not in valid_levels:
-            raise koji.GenericError, "Invalid log level: %s" % level
+            raise koji.GenericError("Invalid log level: %s" % level)
         #all our loggers start with koji
         if name == '':
             name = 'koji'
@@ -660,15 +645,6 @@ def load_scripts(environ):
     import kojihub
 
 
-#
-# mod_python handler
-#
-
-def handler(req):
-    wrapper = WSGIWrapper(req)
-    return wrapper.run(application)
-
-
 def get_memory_usage():
     pagesize = resource.getpagesize()
     statm = [pagesize*int(y)/1024 for y in "".join(open("/proc/self/statm").readlines()).strip().split()]
@@ -687,10 +663,11 @@ def server_setup(environ):
         plugins = load_plugins(opts)
         registry = get_registry(opts, plugins)
         policy = get_policy(opts, plugins)
-        koji.db.provideDBopts(database = opts["DBName"],
-                              user = opts["DBUser"],
-                              password = opts.get("DBPass",None),
-                              host = opts.get("DBHost", None))
+        koji.db.provideDBopts(database=opts["DBName"],
+                              user=opts["DBUser"],
+                              password=opts.get("DBPass", None),
+                              host=opts.get("DBHost", None),
+                              port=opts.get("DBPort", None))
     except Exception:
         tb_str = ''.join(traceback.format_exception(*sys.exc_info()))
         logger.error(tb_str)
@@ -743,7 +720,7 @@ def application(environ, start_response):
             except Exception:
                 return offline_reply(start_response, msg="database outage")
             h = ModXMLRPCRequestHandler(registry)
-            if environ['CONTENT_TYPE'] == 'application/octet-stream':
+            if environ.get('CONTENT_TYPE') == 'application/octet-stream':
                 response = h._wrap_handler(h.handle_upload, environ)
             else:
                 response = h._wrap_handler(h.handle_rpc, environ)
@@ -756,7 +733,12 @@ def application(environ, start_response):
                 #rollback
                 context.cnx.rollback()
             elif context.commit_pending:
+                # Currently there is not much data we can provide to the
+                # pre/postCommit callbacks. The handler can access context at
+                # least
+                koji.plugin.run_callbacks('preCommit')
                 context.cnx.commit()
+                koji.plugin.run_callbacks('postCommit')
             memory_usage_at_end = get_memory_usage()
             if memory_usage_at_end - memory_usage_at_start > opts['MemoryWarnThreshold']:
                 paramstr = repr(getattr(context, 'params', 'UNKNOWN'))
@@ -767,7 +749,7 @@ def application(environ, start_response):
                         time.time() - start)
         finally:
             #make sure context gets cleaned up
-            if hasattr(context,'cnx'):
+            if hasattr(context, 'cnx'):
                 try:
                     context.cnx.close()
                 except Exception:
@@ -782,7 +764,7 @@ def get_registry(opts, plugins):
     functions = kojihub.RootExports()
     hostFunctions = kojihub.HostExports()
     registry.register_instance(functions)
-    registry.register_module(hostFunctions,"host")
+    registry.register_module(hostFunctions, "host")
     registry.register_function(koji.auth.login)
     registry.register_function(koji.auth.krbLogin)
     registry.register_function(koji.auth.sslLogin)
@@ -792,5 +774,8 @@ def get_registry(opts, plugins):
     registry.register_function(koji.auth.exclusiveSession)
     registry.register_function(koji.auth.sharedSession)
     for name in opts.get('Plugins', '').split():
-        registry.register_plugin(plugins.get(name))
+        plugin = plugins.get(name)
+        if not plugin:
+            continue
+        registry.register_plugin(plugin)
     return registry

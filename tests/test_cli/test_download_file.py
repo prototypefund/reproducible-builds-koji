@@ -1,0 +1,150 @@
+from __future__ import absolute_import
+import mock
+import six
+import shutil
+import tempfile
+import unittest
+
+from koji_cli.lib import download_file, _download_progress
+
+def mock_open():
+    """Return the right patch decorator for open"""
+    if six.PY2:
+        return mock.patch('__builtin__.open')
+    else:
+        return mock.patch('builtins.open')
+
+
+class TestDownloadFile(unittest.TestCase):
+    # Show long diffs in error output...
+    maxDiff = None
+
+    def reset_mock(self):
+        self.stdout.seek(0)
+        self.stdout.truncate()
+        self.stderr.seek(0)
+        self.stderr.truncate()
+        self.requests_get.reset_mock()
+
+    def setUp(self):
+        self.tempdir = tempfile.mkdtemp()
+        self.filename = self.tempdir + "/filename"
+        self.stdout = mock.patch('sys.stdout', new_callable=six.StringIO).start()
+        self.stderr = mock.patch('sys.stderr', new_callable=six.StringIO).start()
+        self.requests_get = mock.patch('requests.get', create=True, name='requests.get').start()
+        # will work when contextlib.closing will be removed in future
+        #self.requests_get = self.requests_get.return_value.__enter__
+
+    def tearDown(self):
+        mock.patch.stopall()
+        shutil.rmtree(self.tempdir)
+
+    def test_handle_download_file_dir(self):
+        with self.assertRaises(IOError) as cm:
+            download_file("http://url", self.tempdir)
+        actual = self.stdout.getvalue()
+        expected = 'Downloading: %s\n' % self.tempdir
+        self.assertMultiLineEqual(actual, expected)
+        self.assertEqual(cm.exception.args, (21, 'Is a directory'))
+        self.requests_get.assert_called_once()
+
+    @mock_open()
+    def test_handle_download_file(self, m_open):
+        self.reset_mock()
+        response = mock.MagicMock()
+        self.requests_get.return_value = response
+        response.headers.get.return_value = '5' # content-length
+        response.iter_content.return_value = ['abcde']
+
+        rv = download_file("http://url", self.filename)
+
+        actual = self.stdout.getvalue()
+        expected = 'Downloading: %s\n[====================================] 100%%     5.00 B\r\n' % self.filename
+        self.assertMultiLineEqual(actual, expected)
+
+        self.requests_get.assert_called_once()
+        m_open.assert_called_once()
+        response.headers.get.assert_called_once()
+        response.iter_content.assert_called_once()
+        self.assertIsNone(rv)
+
+    @mock_open()
+    def test_handle_download_file_undefined_length(self, m_open):
+        self.reset_mock()
+        response = mock.MagicMock()
+        self.requests_get.return_value = response
+        response.headers.get.return_value = None # content-length
+        response.content = 'abcdef'
+
+        rv = download_file("http://url", self.filename)
+
+        actual = self.stdout.getvalue()
+        expected = 'Downloading: %s\n[====================================] 100%%     6.00 B\r\n' % self.filename
+        self.assertMultiLineEqual(actual, expected)
+
+        self.requests_get.assert_called_once()
+        m_open.assert_called_once()
+        response.headers.get.assert_called_once()
+        response.iter_content.assert_not_called()
+        self.assertIsNone(rv)
+
+
+    def test_handle_download_file_with_size(self):
+        rv = download_file("http://url", self.filename, size=10, num=8)
+        actual = self.stdout.getvalue()
+        expected = 'Downloading [8/10]: %s\n\n' % self.filename
+        self.assertMultiLineEqual(actual, expected)
+        self.requests_get.assert_called_once()
+        self.assertIsNone(rv)
+
+    def test_handle_download_file_quiet_noprogress(self):
+        download_file("http://url", self.filename, quiet=True, noprogress=False)
+        actual = self.stdout.getvalue()
+        expected = ''
+        self.assertMultiLineEqual(actual, expected)
+
+        self.reset_mock()
+        download_file("http://url", self.filename, quiet=True, noprogress=True)
+        actual = self.stdout.getvalue()
+        expected = ''
+        self.assertMultiLineEqual(actual, expected)
+
+        self.reset_mock()
+        download_file("http://url", self.filename, quiet=False, noprogress=True)
+        actual = self.stdout.getvalue()
+        expected = 'Downloading: %s\n' % self.filename
+        self.assertMultiLineEqual(actual, expected)
+
+    '''
+    possible tests
+    - handling redirect headers
+    - http vs https
+    '''
+
+class TestDownloadProgress(unittest.TestCase):
+    # Show long diffs in error output...
+    maxDiff = None
+
+    def setUp(self):
+        self.stdout = mock.patch('sys.stdout', new_callable=six.StringIO).start()
+
+    def tearDown(self):
+        mock.patch.stopall()
+
+    def test_download_progress(self):
+        _download_progress(0, 0)
+        _download_progress(1024 * 92, 1024)
+        _download_progress(1024 * 1024 * 23, 1024 * 1024 * 11)
+        _download_progress(1024 * 1024 * 1024 * 35, 1024 * 1024 * 1024 * 30)
+        _download_progress(318921, 318921)
+        actual = self.stdout.getvalue()
+        expected = '[                                    ]   0%     0.00 B\r' + \
+                   '[                                    ]   1%   1.00 KiB\r' + \
+                   '[=================                   ]  47%  11.00 MiB\r' + \
+                   '[==============================      ]  85%  30.00 GiB\r' + \
+                   '[====================================] 100% 311.45 KiB\r'
+        self.assertMultiLineEqual(actual, expected)
+
+
+if __name__ == '__main__':
+    unittest.main()

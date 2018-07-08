@@ -1,5 +1,6 @@
 #import koji
 #import koji.util
+#from pprint import pformat
 #from kojiweb import util
 
 #include "includes/header.chtml"
@@ -23,15 +24,20 @@
     <tr>
       <th>Epoch</th><td>$build.epoch</td>
     </tr>
-    #if $mavenbuild
+    #if $build.get('source')
     <tr>
-      <th>Maven&nbsp;groupId</th><td>$mavenbuild.group_id</td>
+      <th>Source</th><td>$build['source']</td>
+    </tr>
+    #end if
+    #if 'maven' in $typeinfo
+    <tr>
+      <th>Maven&nbsp;groupId</th><td>$typeinfo.maven.group_id</td>
     </tr>
     <tr>
-      <th>Maven&nbsp;artifactId</th><td>$mavenbuild.artifact_id</td>
+      <th>Maven&nbsp;artifactId</th><td>$typeinfo.maven.artifact_id</td>
     </tr>
     <tr>
-      <th>Maven&nbsp;version</th><td>$mavenbuild.version</td>
+      <th>Maven&nbsp;version</th><td>$typeinfo.maven.version</td>
     </tr>
     #end if
     #if $summary
@@ -59,6 +65,10 @@
       </td>
     </tr>
     <tr>
+      <th>Volume</th>
+      <td>$build.volume_name</td>
+    </tr>
+    <tr>
       <th>Started</th><td>$util.formatTimeLong($start_time)</td>
     </tr>
     #if $build.state == $koji.BUILD_STATES.BUILDING
@@ -75,6 +85,11 @@
     #if $task
     <tr>
       <th>Task</th><td><a href="taskinfo?taskID=$task.id" class="task$util.taskState($task.state)">$koji.taskLabel($task)</a></td>
+    </tr>
+    #end if
+    #if $build.get('extra')
+    <tr>
+      <th>Extra</th><td class="usertext">$util.escapeHTML($pformat($build.extra))</td>
     </tr>
     #end if
     <tr>
@@ -98,14 +113,18 @@
       <td class="container">
         #if $len($rpmsByArch) > 0
         <table class="nested">
-          #if $rpmsByArch.has_key('src')
+          #if 'src' in $rpmsByArch
           <tr><th>src</th><th></th></tr>
           #for $rpm in $rpmsByArch['src']
           #set $rpmfile = '%(name)s-%(version)s-%(release)s.%(arch)s.rpm' % $rpm
           #set $rpmpath = $pathinfo.rpm($rpm)
           <tr>
             <td></td>
+            #if $rpm.metadata_only
+            <td>$rpmfile (<a href="rpminfo?rpmID=$rpm.id">info</a>) (metadata only)</td>
+            #else
             <td>$rpmfile (<a href="rpminfo?rpmID=$rpm.id">info</a>) (<a href="$nvrpath/$rpmpath">download</a>)</td>
+            #end if
           </tr>
           #end for
           #end if
@@ -117,17 +136,8 @@
           #end if
           <tr>
             <th>$arch</th>
-            <td>
-              #if $task
-              #if $arch == 'noarch'
-              (<a href="$nvrpath/data/logs/$noarch_log_dest/">build logs</a>)
-              #else
-              (<a href="$nvrpath/data/logs/$arch/">build logs</a>)
-              #end if
-              #end if
-            </td>
           </tr>
-          #for $rpm in $rpmsByArch[$arch] + $debuginfoByArch.get($arch, [])
+          #for $rpm in $rpmsByArch[$arch]
           <tr>
             #set $rpmfile = '%(name)s-%(version)s-%(release)s.%(arch)s.rpm' % $rpm
             #set $rpmpath = $pathinfo.rpm($rpm)
@@ -144,43 +154,57 @@
         #end if
       </td>
     </tr>
-    #if $archives
+    #for btype in $archiveIndex
+    #set $archivesByExt = $archiveIndex[btype]
+    #if not $archivesByExt
+    #continue
+    #end if
     <tr>
-      <th>Archives</th>
+      <th>$btype.capitalize() Archives</th>
       <td class="container">
-	<table class="nested">
-	  #set $exts = $archivesByExt.keys()
-	  #for ext in $exts
-	  <tr>
-	    <th>$ext</th>
-	    <td>
-          #if $task and $ext == $exts[0]
-	        #if $mavenbuild
-                (<a href="$nvrpath/data/logs/maven/">build logs</a>)
-            #elif $winbuild
-                (<a href="$nvrpath/data/logs/win/">build logs</a>)
-            #elif $imagebuild
-                (<a href="$nvrpath/data/logs/image">build logs</a>)
-	        #end if
-          #end if
-	    </td>
-	  </tr>
-	  #for $archive in $archivesByExt[$ext]
-	  <tr>
-	    <td/>
-	    <td>
-            #if $mavenbuild
-            $archive.filename (<a href="archiveinfo?archiveID=$archive.id">info</a>) (<a href="$pathinfo.mavenbuild($build)/$pathinfo.mavenfile($archive)">download</a>)
-            #elif $winbuild
-            $pathinfo.winfile($archive) (<a href="archiveinfo?archiveID=$archive.id">info</a>) (<a href="$pathinfo.winbuild($build)/$pathinfo.winfile($archive)">download</a>)
-            #elif $imagebuild
-            $archive.filename (<a href="archiveinfo?archiveID=$archive.id">info</a>) (<a href="$pathinfo.imagebuild($build)/$archive.filename">download</a>)
+        <table class="nested">
+          #set $exts = $archivesByExt.keys()
+          #for ext in $exts
+          <tr>
+            <th>$ext</th>
+          </tr>
+          #for $archive in $archivesByExt[$ext]
+          <tr>
+            <td/>
+            <td>
+            #if $archive.metadata_only
+            $archive.display (<a href="archiveinfo?archiveID=$archive.id">info</a>)
+            #else
+            $archive.display (<a href="archiveinfo?archiveID=$archive.id">info</a>) (<a href="$archive.dl_url">download</a>)
             #end if
-	    </td>
-	  </tr>
-	  #end for
-	  #end for
-	</table>
+            </td>
+          </tr>
+          #end for
+          #end for
+        </table>
+      </td>
+    </tr>
+    #end for
+    #if $logs_by_dir
+    <tr>
+      <th>Logs</th>
+      <td class="container">
+        <table class="nested">
+          #set $logdirs = $logs_by_dir.keys()
+          #for logdir in $logdirs
+          <tr>
+            <th>$logdir</th>
+          </tr>
+          #for loginfo in $logs_by_dir[$logdir]
+          <tr>
+            <td/>
+            <td>
+            <a href="$loginfo.dl_url">$loginfo.name</a>
+            </td>
+          </tr>
+          #end for
+          #end for
+        </table>
       </td>
     </tr>
     #end if

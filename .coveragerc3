@@ -1,0 +1,17 @@
+[run]
+
+; extra omissions for py3 for now
+
+omit =
+    /usr/*
+    tests/*
+    hub/*
+    util/*
+    koji/daemon.py
+    koji/tasks.py
+
+[report]
+exclude_lines =
+    pragma: no cover
+    no cover 3.x
+    if six.PY2

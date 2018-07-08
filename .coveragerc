@@ -1,0 +1,10 @@
+[run]
+
+omit =
+    /usr/*
+    tests/*
+
+[report]
+exclude_lines =
+    pragma: no cover
+    no cover: 2.x

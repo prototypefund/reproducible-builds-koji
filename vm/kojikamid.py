@@ -33,7 +33,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import urlparse
 import xmlrpclib
 import base64
 import hashlib
@@ -136,20 +135,20 @@ class WindowsBuild(object):
                 else:
                     self.logger.info('file %s exists', entry)
         if errors:
-            raise BuildError, 'error validating build environment: %s' % \
-                  ', '.join(errors)
+            raise BuildError('error validating build environment: %s' % \
+                  ', '.join(errors))
 
     def updateClam(self):
         """update ClamAV virus definitions"""
         ret, output = run(['/bin/freshclam', '--quiet'])
         if ret:
-            raise BuildError, 'could not update ClamAV database: %s' % output
+            raise BuildError('could not update ClamAV database: %s' % output)
 
     def checkEnv(self):
         """make the environment is fit for building in"""
         for tool in ['/bin/freshclam', '/bin/clamscan', '/bin/patch']:
             if not os.path.isfile(tool):
-                raise BuildError, '%s is missing from the build environment' % tool
+                raise BuildError('%s is missing from the build environment' % tool)
 
     def zipDir(self, rootdir, filename):
         rootbase = os.path.basename(rootdir)
@@ -188,7 +187,7 @@ class WindowsBuild(object):
                    os.path.isfile(os.path.join(patchdir, patch)) and \
                    patch.endswith('.patch')]
         if not patches:
-            raise BuildError, 'no patches found at %s' % patchdir
+            raise BuildError('no patches found at %s' % patchdir)
         patches.sort()
         for patch in patches:
             cmd = ['/bin/patch', '--verbose', '-d', sourcedir, '-p1', '-i', os.path.join(patchdir, patch)]
@@ -198,9 +197,9 @@ class WindowsBuild(object):
         """Load build configuration from the spec file."""
         specfiles = [spec for spec in os.listdir(self.spec_dir) if spec.endswith('.ini')]
         if len(specfiles) == 0:
-            raise BuildError, 'No .ini file found'
+            raise BuildError('No .ini file found')
         elif len(specfiles) > 1:
-            raise BuildError, 'Multiple .ini files found'
+            raise BuildError('Multiple .ini files found')
 
         conf = ConfigParser()
         conf.read(os.path.join(self.spec_dir, specfiles[0]))
@@ -291,7 +290,7 @@ class WindowsBuild(object):
         """Create the buildroot object on the hub."""
         repo_id = self.task_opts.get('repo_id')
         if not repo_id:
-            raise BuildError, 'repo_id must be specified'
+            raise BuildError('repo_id must be specified')
         self.buildroot_id = self.server.initBuildroot(repo_id, self.platform)
 
     def expireBuildroot(self):
@@ -302,7 +301,7 @@ class WindowsBuild(object):
         """Download the file from buildreq, at filepath, into the basedir"""
         destpath = os.path.join(basedir, fileinfo['localpath'])
         ensuredir(os.path.dirname(destpath))
-        destfile = file(destpath, 'w')
+        destfile = open(destpath, 'w')
         offset = 0
         checksum = hashlib.md5()
         while True:
@@ -318,8 +317,8 @@ class WindowsBuild(object):
         digest = checksum.hexdigest()
         # rpms don't have a md5sum in the fileinfo, but check it for everything else
         if ('md5sum' in fileinfo) and (digest != fileinfo['md5sum']):
-            raise BuildError, 'md5 checksum validation failed for %s, %s (computed) != %s (provided)' % \
-                  (destpath, digest, fileinfo['md5sum'])
+            raise BuildError('md5 checksum validation failed for %s, %s (computed) != %s (provided)' % \
+                  (destpath, digest, fileinfo['md5sum']))
         self.logger.info('Retrieved %s (%s bytes, md5: %s)', destpath, offset, digest)
 
     def fetchBuildReqs(self):
@@ -409,7 +408,7 @@ class WindowsBuild(object):
         cmd = ['cmd.exe', '/C', 'C:\\Windows\\Temp\\' + os.path.basename(tmpname)]
         ret, output = run(cmd, chdir=self.source_dir)
         if ret:
-            raise BuildError, 'build command failed, see build.log for details'
+            raise BuildError('build command failed, see build.log for details')
 
     def bashBuild(self):
         """Do the build: run the execute line(s) with bash"""
@@ -441,7 +440,7 @@ class WindowsBuild(object):
         cmd = ['/bin/bash', '-e', '-x', tmpname]
         ret, output = run(cmd, chdir=self.source_dir)
         if ret:
-            raise BuildError, 'build command failed, see build.log for details'
+            raise BuildError('build command failed, see build.log for details')
 
     def checkBuild(self):
         """Verify that the build completed successfully."""
@@ -468,13 +467,13 @@ class WindowsBuild(object):
                     errors.append('file %s does not exist' % entry)
         self.virusCheck(self.workdir)
         if errors:
-            raise BuildError, 'error validating build output: %s' % \
-                  ', '.join(errors)
+            raise BuildError('error validating build output: %s' % \
+                  ', '.join(errors))
 
     def virusCheck(self, path):
         """ensure a path is virus free with ClamAV. path should be absolute"""
         if not path.startswith('/'):
-            raise BuildError, 'Invalid path to scan for viruses: ' + path
+            raise BuildError('Invalid path to scan for viruses: ' + path)
         run(['/bin/clamscan', '--quiet', '--recursive', path], fatal=True)
 
     def gatherResults(self):
@@ -526,7 +525,7 @@ def run(cmd, chdir=None, fatal=False, log=True):
             msg += ', see %s for details' % (os.path.basename(logfd.name))
         else:
             msg += ', output: %s' % output
-        raise BuildError, msg
+        raise BuildError(msg)
     return ret, output
 
 def find_net_info():
@@ -535,7 +534,7 @@ def find_net_info():
     """
     ret, output = run(['ipconfig', '/all'], log=False)
     if ret:
-        raise RuntimeError, 'error running ipconfig, output was: %s' % output
+        raise RuntimeError('error running ipconfig, output was: %s' % output)
     macaddr = None
     gateway = None
     for line in output.splitlines():
@@ -561,7 +560,7 @@ def upload_file(server, prefix, path):
     """upload a single file to the vmd"""
     logger = logging.getLogger('koji.vm')
     destpath = os.path.join(prefix, path)
-    fobj = file(destpath, 'r')
+    fobj = open(destpath, 'r')
     offset = 0
     sum = hashlib.md5()
     while True:
@@ -615,7 +614,7 @@ def setup_logging(opts):
     if opts.debug:
         level = logging.DEBUG
     logger.setLevel(level)
-    logfd = file(logfile, 'w')
+    logfd = open(logfile, 'w')
     handler = logging.StreamHandler(logfd)
     handler.setLevel(level)
     handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(name)s: %(message)s'))
@@ -644,7 +643,7 @@ def stream_logs(server, handler, builds):
             if not fd:
                 if os.path.isfile(log):
                     try:
-                        fd = file(log, 'r')
+                        fd = open(log, 'r')
                         logs[log] = (relpath, fd)
                     except:
                         log_local('Error opening %s' % log)
@@ -701,18 +700,18 @@ def main():
                            '--desc', 'Runs Koji tasks assigned to a VM'],
                           log=False)
         if ret:
-            print 'Error installing %s service, output was: %s' % (prog, output)
+            print('Error installing %s service, output was: %s' % (prog, output))
             sys.exit(1)
         else:
-            print 'Successfully installed the %s service' % prog
+            print('Successfully installed the %s service' % prog)
             sys.exit(0)
     elif opts.uninstall:
         ret, output = run(['/bin/cygrunsrv', '--remove', prog], log=False)
         if ret:
-            print 'Error removing the %s service, output was: %s' % (prog, output)
+            print('Error removing the %s service, output was: %s' % (prog, output))
             sys.exit(1)
         else:
-            print 'Successfully removed the %s service' % prog
+            print('Successfully removed the %s service' % prog)
             sys.exit(0)
 
     handler = setup_logging(opts)

@@ -1,56 +1,7 @@
 
--- vim:noet:sw=8
--- still needs work
-DROP TABLE build_notifications;
+-- vim:et:sw=8
 
-DROP TABLE log_messages;
-
-DROP TABLE buildroot_listing;
-DROP TABLE image_listing;
-
-DROP TABLE rpminfo;
-DROP TABLE image_builds;
-DROP TABLE image_archives;
-
-DROP TABLE group_package_listing;
-DROP TABLE group_req_listing;
-DROP TABLE group_config;
-DROP TABLE groups;
-
-DROP TABLE tag_listing;
-DROP TABLE tag_packages;
-
-DROP TABLE buildroot;
-DROP TABLE repo;
-
-DROP TABLE build_target_config;
-DROP TABLE build_target;
-
-DROP TABLE tag_config;
-DROP TABLE tag_inheritance;
-DROP TABLE tag;
-
-DROP TABLE build;
-
-DROP TABLE task;
-
-DROP TABLE host_channels;
-DROP TABLE host;
-
-DROP TABLE channels;
-DROP TABLE package;
-
-DROP TABLE user_groups;
-DROP TABLE user_perms;
-DROP TABLE permissions;
-
-DROP TABLE sessions;
-DROP TABLE users;
-
-DROP TABLE event_labels;
-DROP TABLE events;
-DROP FUNCTION get_event();
-DROP FUNCTION get_event_time(INTEGER);
+-- drop statements for old data have moved to schema-clear.sql
 
 BEGIN WORK;
 
@@ -100,6 +51,7 @@ CREATE TABLE permissions (
 INSERT INTO permissions (name) VALUES ('admin');
 INSERT INTO permissions (name) VALUES ('build');
 INSERT INTO permissions (name) VALUES ('repo');
+INSERT INTO permissions (name) VALUES ('image');
 INSERT INTO permissions (name) VALUES ('livecd');
 INSERT INTO permissions (name) VALUES ('maven-import');
 INSERT INTO permissions (name) VALUES ('win-import');
@@ -184,6 +136,7 @@ INSERT INTO channels (name) VALUES ('livecd');
 INSERT INTO channels (name) VALUES ('appliance');
 INSERT INTO channels (name) VALUES ('vm');
 INSERT INTO channels (name) VALUES ('image');
+INSERT INTO channels (name) VALUES ('livemedia');
 
 -- Here we track the build machines
 -- each host has an entry in the users table also
@@ -192,20 +145,45 @@ CREATE TABLE host (
 	id SERIAL NOT NULL PRIMARY KEY,
 	user_id INTEGER NOT NULL REFERENCES users (id),
 	name VARCHAR(128) UNIQUE NOT NULL,
-	arches TEXT,
 	task_load FLOAT CHECK (NOT task_load < 0) NOT NULL DEFAULT 0.0,
+	ready BOOLEAN NOT NULL DEFAULT 'false'
+) WITHOUT OIDS;
+
+CREATE TABLE host_config (
+        host_id INTEGER NOT NULL REFERENCES host(id),
+	arches TEXT,
 	capacity FLOAT CHECK (capacity > 1) NOT NULL DEFAULT 2.0,
 	description TEXT,
 	comment TEXT,
-	ready BOOLEAN NOT NULL DEFAULT 'false',
-	enabled BOOLEAN NOT NULL DEFAULT 'true'
+	enabled BOOLEAN NOT NULL DEFAULT 'true',
+-- versioned - see desc above
+	create_event INTEGER NOT NULL REFERENCES events(id) DEFAULT get_event(),
+	revoke_event INTEGER REFERENCES events(id),
+	creator_id INTEGER NOT NULL REFERENCES users(id),
+	revoker_id INTEGER REFERENCES users(id),
+	active BOOLEAN DEFAULT 'true' CHECK (active),
+	CONSTRAINT active_revoke_sane CHECK (
+		(active IS NULL AND revoke_event IS NOT NULL AND revoker_id IS NOT NULL)
+		OR (active IS NOT NULL AND revoke_event IS NULL AND revoker_id IS NULL)),
+	PRIMARY KEY (create_event, host_id),
+	UNIQUE (host_id, active)
 ) WITHOUT OIDS;
-CREATE INDEX HOST_IS_READY_AND_ENABLED ON host(enabled, ready) WHERE (enabled IS TRUE AND ready IS TRUE);
+CREATE INDEX host_config_by_active_and_enabled ON host_config(active, enabled);
 
 CREATE TABLE host_channels (
 	host_id INTEGER NOT NULL REFERENCES host(id),
 	channel_id INTEGER NOT NULL REFERENCES channels(id),
-	UNIQUE (host_id,channel_id)
+-- versioned - see desc above
+	create_event INTEGER NOT NULL REFERENCES events(id) DEFAULT get_event(),
+	revoke_event INTEGER REFERENCES events(id),
+	creator_id INTEGER NOT NULL REFERENCES users(id),
+	revoker_id INTEGER REFERENCES users(id),
+	active BOOLEAN DEFAULT 'true' CHECK (active),
+	CONSTRAINT active_revoke_sane CHECK (
+		(active IS NULL AND revoke_event IS NOT NULL AND revoker_id IS NOT NULL)
+		OR (active IS NOT NULL AND revoke_event IS NULL AND revoker_id IS NULL)),
+	PRIMARY KEY (create_event, host_id, channel_id),
+	UNIQUE (host_id, channel_id, active)
 ) WITHOUT OIDS;
 
 
@@ -283,11 +261,14 @@ CREATE TABLE build (
 	version TEXT NOT NULL,
 	release TEXT NOT NULL,
 	epoch INTEGER,
+	source TEXT,
 	create_event INTEGER NOT NULL REFERENCES events(id) DEFAULT get_event(),
+	start_time TIMESTAMP,
 	completion_time TIMESTAMP,
 	state INTEGER NOT NULL,
 	task_id INTEGER REFERENCES task (id),
 	owner INTEGER NOT NULL REFERENCES users (id),
+	extra TEXT,
 	CONSTRAINT build_pkg_ver_rel UNIQUE (pkg_id, version, release),
 	CONSTRAINT completion_sane CHECK ((state = 0 AND completion_time IS NULL) OR
                                           (state != 0 AND completion_time IS NOT NULL))
@@ -296,12 +277,33 @@ CREATE TABLE build (
 CREATE INDEX build_by_pkg_id ON build (pkg_id);
 CREATE INDEX build_completion ON build(completion_time);
 
+
+CREATE TABLE btype (
+        id SERIAL NOT NULL PRIMARY KEY,
+        name TEXT UNIQUE NOT NULL
+) WITHOUT OIDS;
+
+
+-- legacy build types
+INSERT INTO btype(name) VALUES ('rpm');
+INSERT INTO btype(name) VALUES ('maven');
+INSERT INTO btype(name) VALUES ('win');
+INSERT INTO btype(name) VALUES ('image');
+
+
+CREATE TABLE build_types (
+        build_id INTEGER NOT NULL REFERENCES build(id),
+        btype_id INTEGER NOT NULL REFERENCES btype(id),
+        PRIMARY KEY (build_id, btype_id)
+) WITHOUT OIDS;
+
+
 -- Note: some of these CREATEs may seem a little out of order. This is done to keep
 -- the references sane.
 
 CREATE TABLE tag (
 	id SERIAL NOT NULL PRIMARY KEY,
-	name VARCHAR(50) UNIQUE NOT NULL
+	name TEXT UNIQUE NOT NULL
 ) WITHOUT OIDS;
 
 -- CREATE INDEX tag_by_name ON tag (name);
@@ -433,7 +435,8 @@ CREATE TABLE repo (
 	id SERIAL NOT NULL PRIMARY KEY,
 	create_event INTEGER NOT NULL REFERENCES events(id) DEFAULT get_event(),
 	tag_id INTEGER NOT NULL REFERENCES tag(id),
-	state INTEGER
+	state INTEGER,
+	dist BOOLEAN DEFAULT 'false'
 ) WITHOUT OIDS;
 
 -- external yum repos
@@ -478,18 +481,67 @@ create table tag_external_repos (
 	UNIQUE (tag_id, external_repo_id, active)
 );
 
+
+-- data for content generators
+CREATE TABLE content_generator (
+	id SERIAL PRIMARY KEY,
+	name TEXT
+) WITHOUT OIDS;
+
+
+CREATE TABLE cg_users (
+	cg_id INTEGER NOT NULL REFERENCES content_generator (id),
+	user_id INTEGER NOT NULL REFERENCES users (id),
+-- versioned - see earlier description of versioning
+	create_event INTEGER NOT NULL REFERENCES events(id) DEFAULT get_event(),
+	revoke_event INTEGER REFERENCES events(id),
+	creator_id INTEGER NOT NULL REFERENCES users(id),
+	revoker_id INTEGER REFERENCES users(id),
+	active BOOLEAN DEFAULT 'true' CHECK (active),
+	CONSTRAINT active_revoke_sane CHECK (
+		(active IS NULL AND revoke_event IS NOT NULL AND revoker_id IS NOT NULL)
+		OR (active IS NOT NULL AND revoke_event IS NULL AND revoker_id IS NULL)),
+	PRIMARY KEY (create_event, cg_id, user_id),
+	UNIQUE (cg_id, user_id, active)
+) WITHOUT OIDS;
+
+
 -- here we track the buildroots on the machines
 CREATE TABLE buildroot (
 	id SERIAL NOT NULL PRIMARY KEY,
+	br_type INTEGER NOT NULL,
+	cg_id INTEGER REFERENCES content_generator (id),
+	cg_version TEXT,
+	CONSTRAINT cg_sane CHECK (
+		(cg_id IS NULL AND cg_version IS NULL)
+		OR (cg_id IS NOT NULL AND cg_version IS NOT NULL)),
+	container_type TEXT,
+	container_arch TEXT,
+	CONSTRAINT container_sane CHECK (
+		(container_type IS NULL AND container_arch IS NULL)
+		OR (container_type IS NOT NULL AND container_arch IS NOT NULL)),
+	host_os TEXT,
+	host_arch TEXT,
+	extra TEXT
+) WITHOUT OIDS;
+
+CREATE TABLE standard_buildroot (
+	buildroot_id INTEGER NOT NULL PRIMARY KEY REFERENCES buildroot(id),
 	host_id INTEGER NOT NULL REFERENCES host(id),
 	repo_id INTEGER NOT NULL REFERENCES repo (id),
-	arch VARCHAR(16) NOT NULL,
 	task_id INTEGER NOT NULL REFERENCES task (id),
 	create_event INTEGER NOT NULL REFERENCES events(id) DEFAULT get_event(),
 	retire_event INTEGER,
-	state INTEGER,
-	dirtyness INTEGER
+	state INTEGER
 ) WITHOUT OIDS;
+
+CREATE TABLE buildroot_tools_info (
+	buildroot_id INTEGER NOT NULL REFERENCES buildroot(id),
+	tool TEXT NOT NULL,
+	version TEXT NOT NULL,
+	PRIMARY KEY (buildroot_id, tool)
+) WITHOUT OIDS;
+
 
 -- track spun images (livecds, installation, VMs...)
 CREATE TABLE image_builds (
@@ -635,6 +687,8 @@ CREATE TABLE rpminfo (
 	payloadhash TEXT NOT NULL,
 	size BIGINT NOT NULL,
 	buildtime BIGINT NOT NULL,
+	metadata_only BOOLEAN NOT NULL DEFAULT FALSE,
+	extra TEXT,
 	CONSTRAINT rpminfo_unique_nvra UNIQUE (name,version,release,arch,external_repo_id)
 ) WITHOUT OIDS;
 CREATE INDEX rpminfo_build ON rpminfo(build_id);
@@ -655,16 +709,6 @@ CREATE TABLE buildroot_listing (
 	UNIQUE (buildroot_id,rpm_id)
 ) WITHOUT OIDS;
 CREATE INDEX buildroot_listing_rpms ON buildroot_listing(rpm_id);
-
-CREATE TABLE log_messages (
-    id SERIAL NOT NULL PRIMARY KEY,
-    message TEXT NOT NULL,
-    message_time TIMESTAMP NOT NULL DEFAULT NOW(),
-    logger_name VARCHAR(200) NOT NULL,
-    level VARCHAR(10) NOT NULL,
-    location VARCHAR(200),
-    host VARCHAR(200)
-) WITHOUT OIDS;
 
 CREATE TABLE build_notifications (
     id SERIAL NOT NULL PRIMARY KEY,
@@ -717,6 +761,7 @@ insert into archivetypes (name, description, extensions) values ('zip', 'Zip fil
 insert into archivetypes (name, description, extensions) values ('pom', 'Maven Project Object Management file', 'pom');
 insert into archivetypes (name, description, extensions) values ('tar', 'Tar file', 'tar tar.gz tar.bz2 tar.xz');
 insert into archivetypes (name, description, extensions) values ('xml', 'XML file', 'xml');
+insert into archivetypes (name, description, extensions) values ('xmlcompressed', 'Compressed XML file', 'xml.gz xml.bz2 xml.xz');
 insert into archivetypes (name, description, extensions) values ('xsd', 'XML Schema Definition', 'xsd');
 insert into archivetypes (name, description, extensions) values ('spec', 'RPM spec file', 'spec');
 insert into archivetypes (name, description, extensions) values ('exe', 'Windows executable', 'exe');
@@ -755,6 +800,20 @@ insert into archivetypes (name, description, extensions) values ('vhd', 'Hyper-V
 insert into archivetypes (name, description, extensions) values ('wsf', 'Windows script file', 'wsf');
 insert into archivetypes (name, description, extensions) values ('box', 'Vagrant Box Image', 'box');
 insert into archivetypes (name, description, extensions) values ('raw-xz', 'xz compressed raw disk image', 'raw.xz');
+insert into archivetypes (name, description, extensions) values ('json', 'JSON data', 'json');
+insert into archivetypes (name, description, extensions) values ('key', 'Key file', 'key');
+insert into archivetypes (name, description, extensions) values ('dot', 'DOT graph description', 'dot gv');
+insert into archivetypes (name, description, extensions) values ('groovy', 'Groovy script file', 'groovy gvy');
+insert into archivetypes (name, description, extensions) values ('batch', 'Batch file', 'bat');
+insert into archivetypes (name, description, extensions) values ('shell', 'Shell script', 'sh');
+insert into archivetypes (name, description, extensions) values ('rc', 'Resource file', 'rc');
+insert into archivetypes (name, description, extensions) values ('wsdl', 'Web Services Description Language', 'wsdl');
+insert into archivetypes (name, description, extensions) values ('obr', 'OSGi Bundle Repository', 'obr');
+insert into archivetypes (name, description, extensions) values ('liveimg-squashfs', 'liveimg compatible squashfs image', 'liveimg.squashfs');
+insert into archivetypes (name, description, extensions) values ('tlb', 'OLE type library file', 'tlb');
+insert into archivetypes (name, description, extensions) values ('jnilib', 'Java Native Interface library', 'jnilib');
+insert into archivetypes (name, description, extensions) values ('yaml', 'YAML Ain''t Markup Language', 'yaml yml');
+insert into archivetypes (name, description, extensions) values ('xjb', 'JAXB(Java Architecture for XML Binding) Binding Customization File', 'xjb');
 
 
 -- Do we want to enforce a constraint that a build can only generate one
@@ -762,12 +821,16 @@ insert into archivetypes (name, description, extensions) values ('raw-xz', 'xz c
 CREATE TABLE archiveinfo (
 	id SERIAL NOT NULL PRIMARY KEY,
         type_id INTEGER NOT NULL REFERENCES archivetypes (id),
+        btype_id INTEGER REFERENCES btype(id),
+        -- ^ TODO add NOT NULL
 	build_id INTEGER NOT NULL REFERENCES build (id),
 	buildroot_id INTEGER REFERENCES buildroot (id),
 	filename TEXT NOT NULL,
 	size BIGINT NOT NULL,
 	checksum TEXT NOT NULL,
-	checksum_type INTEGER NOT NULL
+	checksum_type INTEGER NOT NULL,
+	metadata_only BOOLEAN NOT NULL DEFAULT FALSE,
+	extra TEXT
 ) WITHOUT OIDS;
 CREATE INDEX archiveinfo_build_idx ON archiveinfo (build_id);
 CREATE INDEX archiveinfo_buildroot_idx on archiveinfo (buildroot_id);
@@ -786,13 +849,22 @@ CREATE TABLE image_archives (
     arch VARCHAR(16) NOT NULL
 ) WITHOUT OIDS;
 
--- tracks the contents of an image
-CREATE TABLE image_listing (
-	image_id INTEGER NOT NULL REFERENCES image_archives(archive_id),
+-- tracks the rpm contents of an image or other archive
+CREATE TABLE archive_rpm_components (
+	archive_id INTEGER NOT NULL REFERENCES archiveinfo(id),
 	rpm_id INTEGER NOT NULL REFERENCES rpminfo(id),
-	UNIQUE (image_id, rpm_id)
+	UNIQUE (archive_id, rpm_id)
 ) WITHOUT OIDS;
-CREATE INDEX image_listing_rpms on image_listing(rpm_id);
+CREATE INDEX rpm_components_idx on archive_rpm_components(rpm_id);
+
+-- track the archive contents of an image or other archive
+CREATE TABLE archive_components (
+	archive_id INTEGER NOT NULL REFERENCES archiveinfo(id),
+	component_id INTEGER NOT NULL REFERENCES archiveinfo(id),
+	UNIQUE (archive_id, component_id)
+) WITHOUT OIDS;
+CREATE INDEX archive_components_idx on archive_components(component_id);
+
 
 CREATE TABLE buildroot_archives (
 	buildroot_id INTEGER NOT NULL REFERENCES buildroot (id),

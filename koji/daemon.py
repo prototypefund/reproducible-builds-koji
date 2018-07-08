@@ -22,8 +22,9 @@
 
 import koji
 import koji.tasks
+import koji.xmlrpcplus
 from koji.tasks import safe_rmtree
-from koji.util import md5_constructor, adler32_constructor, parseStatus
+from koji.util import md5_constructor, adler32_constructor, parseStatus, dslice
 import os
 import signal
 import logging
@@ -31,10 +32,10 @@ import urlparse
 from fnmatch import fnmatch
 import base64
 import time
+import subprocess
 import sys
 import traceback
 import errno
-import xmlrpclib
 
 
 def incremental_upload(session, fname, fd, path, retries=5, logger=None):
@@ -61,7 +62,7 @@ def incremental_upload(session, fname, fd, path, retries=5, logger=None):
 
         tries = 0
         while True:
-            if session.uploadFile(path, fname, koji.encode_int(size), digest, koji.encode_int(offset), data):
+            if session.uploadFile(path, fname, size, digest, offset, data):
                 break
 
             if tries <= retries:
@@ -111,7 +112,7 @@ def log_output(session, path, args, outfile, uploadpath, cwd=None, logerror=0, a
             flags = os.O_CREAT | os.O_WRONLY
             if append:
                 flags |= os.O_APPEND
-            fd = os.open(outfile, flags, 0666)
+            fd = os.open(outfile, flags, 0o666)
             os.dup2(fd, 1)
             if logerror:
                 os.dup2(fd, 2)
@@ -129,7 +130,7 @@ def log_output(session, path, args, outfile, uploadpath, cwd=None, logerror=0, a
                     os.close(fd)
                 except:
                     pass
-            print msg
+            print(msg)
             os._exit(1)
     else:
         if chroot:
@@ -142,13 +143,13 @@ def log_output(session, path, args, outfile, uploadpath, cwd=None, logerror=0, a
 
             if not outfd:
                 try:
-                    outfd = file(outfile, 'r')
+                    outfd = open(outfile, 'r')
                 except IOError:
                     # will happen if the forked process has not created the logfile yet
                     continue
                 except:
-                    print 'Error reading log file: %s' % outfile
-                    print ''.join(traceback.format_exception(*sys.exc_info()))
+                    print('Error reading log file: %s' % outfile)
+                    print(''.join(traceback.format_exception(*sys.exc_info())))
 
             incremental_upload(session, remotename, outfd, uploadpath)
 
@@ -163,12 +164,12 @@ def log_output(session, path, args, outfile, uploadpath, cwd=None, logerror=0, a
 class SCM(object):
     "SCM abstraction class"
 
-    types = { 'CVS': ('cvs://',),
-              'CVS+SSH': ('cvs+ssh://',),
-              'GIT': ('git://', 'git+http://', 'git+https://', 'git+rsync://'),
-              'GIT+SSH': ('git+ssh://',),
-              'SVN': ('svn://', 'svn+http://', 'svn+https://'),
-              'SVN+SSH': ('svn+ssh://',) }
+    types = {'CVS': ('cvs://',),
+             'CVS+SSH': ('cvs+ssh://',),
+             'GIT': ('git://', 'git+http://', 'git+https://', 'git+rsync://'),
+             'GIT+SSH': ('git+ssh://',),
+             'SVN': ('svn://', 'svn+http://', 'svn+https://'),
+             'SVN+SSH': ('svn+ssh://',)}
 
     def is_scm_url(url):
         """
@@ -207,7 +208,7 @@ class SCM(object):
         self.logger = logging.getLogger('koji.build.SCM')
 
         if not SCM.is_scm_url(url):
-            raise koji.GenericError, 'Invalid SCM URL: %s' % url
+            raise koji.GenericError('Invalid SCM URL: %s' % url)
 
         self.url = url
         scheme, user, host, path, query, fragment = self._parse_url()
@@ -225,9 +226,14 @@ class SCM(object):
             if self.scheme in schemes:
                 self.scmtype = scmtype
                 break
-        else:
+        else:   # pragma: no cover
             # should never happen
-            raise koji.GenericError, 'Invalid SCM URL: %s' % url
+            raise koji.GenericError('Invalid SCM URL: %s' % url)
+
+    def get_info(self, keys=None):
+        if keys is None:
+            keys = ["url", "scheme", "user", "host", "repository", "module", "revision", "scmtype"]
+        return dslice(vars(self), keys)
 
     def _parse_url(self):
         """
@@ -253,69 +259,107 @@ class SCM(object):
                 # Don't return an empty string
                 user = None
             elif ':' in user:
-                raise koji.GenericError, 'username:password format not supported: %s' % user
+                raise koji.GenericError('username:password format not supported: %s' % user)
             netloc = userhost[1]
         elif len(userhost) > 2:
-            raise koji.GenericError, 'Invalid username@hostname specified: %s' % netloc
+            raise koji.GenericError('Invalid username@hostname specified: %s' % netloc)
+        if not netloc:
+            raise koji.GenericError('Unable to parse SCM URL: %s . Could not find the netloc element.' % self.url)
 
-        # ensure that path and query do not end in /
-        if path.endswith('/'):
-            path = path[:-1]
-        if query.endswith('/'):
-            query = query[:-1]
+        # check for empty path before we apply normpath
+        if not path:
+            raise koji.GenericError('Unable to parse SCM URL: %s . Could not find the path element.' % self.url)
+
+        path = os.path.normpath(path)
+
+        # path and query should not end with /
+        path = path.rstrip('/')
+        query = query.rstrip('/')
+        # normpath might not strip // at start of path
+        if path.startswith('//'):
+            path = '/' + path.strip('/')
+        # path should start with /
+        if not path.startswith('/'):  # pragma: no cover
+            # any such url should have already been caught by is_scm_url
+            raise koji.GenericError('Invalid SCM URL. Path should begin with /: %s) ')
 
         # check for validity: params should be empty, query may be empty, everything else should be populated
-        if params :
-            raise koji.GenericError, 'Unable to parse SCM URL: %s . Params element %s should be empty.' % (self.url, params)
-        if not scheme :
-            raise koji.GenericError, 'Unable to parse SCM URL: %s . Could not find the scheme element.' % self.url
-        if not netloc :
-            raise koji.GenericError, 'Unable to parse SCM URL: %s . Could not find the netloc element.' % self.url
-        if not path :
-            raise koji.GenericError, 'Unable to parse SCM URL: %s . Could not find the path element.' % self.url
-        if not fragment :
-            raise koji.GenericError, 'Unable to parse SCM URL: %s . Could not find the fragment element.' % self.url
+        if params:
+            raise koji.GenericError('Unable to parse SCM URL: %s . Params element %s should be empty.' % (self.url, params))
+        if not scheme:  #pragma: no cover
+            # should not happen because of is_scm_url check earlier
+            raise koji.GenericError('Unable to parse SCM URL: %s . Could not find the scheme element.' % self.url)
+        if not fragment:
+            raise koji.GenericError('Unable to parse SCM URL: %s . Could not find the fragment element.' % self.url)
 
         # return parsed values
         return (scheme, user, netloc, path, query, fragment)
 
     def assert_allowed(self, allowed):
         """
-        Verify that the host and repository of this SCM is in the provided list of
-        allowed repositories.
+        Check this scm against allowed list and apply options
 
-        allowed is a space-separated list of host:repository[:use_common[:source_cmd]] tuples.  Incorrectly-formatted
-        tuples will be ignored.
+        allowed is a space-separated list of entries in one of the following
+        forms:
 
-        If use_common is not present, kojid will attempt to checkout a common/ directory from the
-        repository.  If use_common is set to no, off, false, or 0, it will not attempt to checkout a common/
-        directory.
+            host:repository[:use_common[:source_cmd]]
+            !host:repository
 
-        source_cmd is a shell command (args separated with commas instead of spaces) to run before building the srpm.
-        It is generally used to retrieve source files from a remote location.  If no source_cmd is specified,
-        "make sources" is run by default.
+        Incorrectly-formatted entries will be skipped with a warning.
+
+        The first form allows a host:repository pattern and optionally sets a
+        few options for it.
+
+        The second form explicitly blocks a host:repository pattern
+
+        Both host and repository are treated as glob patterns
+
+        If there is a matching entry, then the optional fields, if given, will
+        be applied to the instance.
+
+        If there is no matching entry, or if the host:repository is blocked
+        then BuildError is raised.
+
+        The use_common option defaults to on.  If it is set to no, off, false
+        or 0, it will be disabled.  If the option is on, then kojid will
+        attempt to checkout a common/ directory from the repository.
+
+        The source_command is a shell command to be run before building the
+        srpm.  It defaults to "make sources".  This can be overridden by the
+        matching allowed entry.  The command must be encoded with commas
+        instead of spaces (e.g. "make,sources").
         """
+        is_allowed = False
         for allowed_scm in allowed.split():
             scm_tuple = allowed_scm.split(':')
-            if len(scm_tuple) >= 2:
-                if fnmatch(self.host, scm_tuple[0]) and fnmatch(self.repository, scm_tuple[1]):
-                    # SCM host:repository is in the allowed list
-                    # check if we specify a value for use_common
-                    if len(scm_tuple) >= 3:
-                        if scm_tuple[2].lower() in ('no', 'off', 'false', '0'):
-                            self.use_common = False
-                    # check if we specify a custom source_cmd
-                    if len(scm_tuple) >= 4:
-                        if scm_tuple[3]:
-                            self.source_cmd = scm_tuple[3].split(',')
-                        else:
-                            # there was nothing after the trailing :, so they don't want to run a source_cmd at all
-                            self.source_cmd = None
-                    break
-            else:
+            if len(scm_tuple) < 2:
                 self.logger.warn('Ignoring incorrectly formatted SCM host:repository: %s' % allowed_scm)
-        else:
-            raise koji.BuildError, '%s:%s is not in the list of allowed SCMs' % (self.host, self.repository)
+                continue
+            host_pat = scm_tuple[0]
+            repo_pat = scm_tuple[1]
+            invert = False
+            if host_pat.startswith('!'):
+                invert = True
+                host_pat = host_pat[1:]
+            if fnmatch(self.host, host_pat) and fnmatch(self.repository, repo_pat):
+                # match
+                if invert:
+                    break
+                is_allowed = True
+                # check if we specify a value for use_common
+                if len(scm_tuple) >= 3:
+                    if scm_tuple[2].lower() in ('no', 'off', 'false', '0'):
+                        self.use_common = False
+                # check if we specify a custom source_cmd
+                if len(scm_tuple) >= 4:
+                    if scm_tuple[3]:
+                        self.source_cmd = scm_tuple[3].split(',')
+                    else:
+                        # there was nothing after the trailing :, so they don't want to run a source_cmd at all
+                        self.source_cmd = None
+                break
+        if not is_allowed:
+            raise koji.BuildError('%s:%s is not in the list of allowed SCMs' % (self.host, self.repository))
 
     def checkout(self, scmdir, session=None, uploadpath=None, logfile=None):
         """
@@ -344,8 +388,8 @@ class SCM(object):
                 _count[0] += 1
                 if log_output(session, cmd[0], cmd, logfile, uploadpath,
                               cwd=chdir, logerror=1, append=append, env=env):
-                    raise koji.BuildError, 'Error running %s command "%s", see %s for details' % \
-                        (self.scmtype, ' '.join(cmd), os.path.basename(logfile))
+                    raise koji.BuildError('Error running %s command "%s", see %s for details' % \
+                        (self.scmtype, ' '.join(cmd), os.path.basename(logfile)))
 
         if self.scmtype == 'CVS':
             pserver = ':pserver:%s@%s:%s' % ((self.user or 'anonymous'), self.host, self.repository)
@@ -354,7 +398,7 @@ class SCM(object):
 
         elif self.scmtype == 'CVS+SSH':
             if not self.user:
-                raise koji.BuildError, 'No user specified for repository access scheme: %s' % self.scheme
+                raise koji.BuildError('No user specified for repository access scheme: %s' % self.scheme)
 
             cvsserver = ':ext:%s@%s:%s' % (self.user, self.host, self.repository)
             module_checkout_cmd = ['cvs', '-d', cvsserver, 'checkout', '-r', self.revision, self.module]
@@ -392,7 +436,7 @@ class SCM(object):
 
         elif self.scmtype == 'GIT+SSH':
             if not self.user:
-                raise koji.BuildError, 'No user specified for repository access scheme: %s' % self.scheme
+                raise koji.BuildError('No user specified for repository access scheme: %s' % self.scheme)
             gitrepo = 'git+ssh://%s@%s%s' % (self.user, self.host, self.repository)
             commonrepo = os.path.dirname(gitrepo) + '/common'
             checkout_path = os.path.basename(self.repository)
@@ -429,14 +473,14 @@ class SCM(object):
 
         elif self.scmtype == 'SVN+SSH':
             if not self.user:
-                raise koji.BuildError, 'No user specified for repository access scheme: %s' % self.scheme
+                raise koji.BuildError('No user specified for repository access scheme: %s' % self.scheme)
 
             svnserver = 'svn+ssh://%s@%s%s' % (self.user, self.host, self.repository)
             module_checkout_cmd = ['svn', 'checkout', '-r', self.revision, '%s/%s' % (svnserver, self.module), self.module]
             common_checkout_cmd = ['svn', 'checkout', '%s/common' % svnserver]
 
         else:
-            raise koji.BuildError, 'Unknown SCM type: %s' % self.scmtype
+            raise koji.BuildError('Unknown SCM type: %s' % self.scmtype)
 
         # perform checkouts
         _run(module_checkout_cmd, chdir=scmdir, fatal=True)
@@ -445,8 +489,8 @@ class SCM(object):
             # Currently only required for GIT checkouts
             # Run the command in the directory the source was checked out into
             if self.scmtype.startswith('GIT') and globals().get('KOJIKAMID'):
-                _run(['git', 'config', 'core.autocrlf',  'true'], chdir=update_checkout_dir, fatal=True)
-                _run(['git', 'config', 'core.safecrlf',  'true'], chdir=update_checkout_dir, fatal=True)
+                _run(['git', 'config', 'core.autocrlf', 'true'], chdir=update_checkout_dir, fatal=True)
+                _run(['git', 'config', 'core.safecrlf', 'true'], chdir=update_checkout_dir, fatal=True)
             _run(update_checkout_cmd, chdir=update_checkout_dir, fatal=True)
 
         if self.use_common and not globals().get('KOJIKAMID'):
@@ -458,8 +502,32 @@ class SCM(object):
                 rel_path = '../' * len(path_comps.split('/'))
                 os.symlink(rel_path + 'common', '%s/../common' % sourcedir)
 
+        self.sourcedir = sourcedir
         return sourcedir
 
+    def get_source(self):
+        r = {
+            'url': self.url,
+            'source': '',
+        }
+        if self.scmtype.startswith('GIT'):
+            cmd = ['git', 'rev-parse', 'HEAD']
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                    cwd=self.sourcedir,)
+            out, _ = proc.communicate()
+            status = proc.wait()
+            if status != 0:
+                raise koji.GenericError('Error getting commit hash for git')
+            fragment = out.strip()
+            scheme = self.scheme[:-3]
+            netloc = self.host
+            path = self.repository
+            query = self.module
+            r['source'] = urlparse.urlunsplit([scheme, netloc, path, query, fragment])
+        else:
+            # just use the same url
+            r['source'] = self.url
+        return r
 ## END kojikamid dup
 
 
@@ -484,20 +552,36 @@ class TaskManager(object):
     def findHandlers(self, vars):
         """Find and index task handlers"""
         for v in vars.values():
-            if type(v) == type(koji.tasks.BaseTaskHandler) and issubclass(v,koji.tasks.BaseTaskHandler):
-                for method in v.Methods:
-                    self.handlers[method] = v
+            self.registerHandler(v)
+
+    def registerHandler(self, entry):
+        """register and index task handler"""
+        if isinstance(entry, type(koji.tasks.BaseTaskHandler)) and issubclass(entry, koji.tasks.BaseTaskHandler):
+            for method in entry.Methods:
+                self.handlers[method] = entry
+
+    def registerCallback(self, entry):
+        """register and index callback plugins"""
+        if callable(entry) and getattr(entry, 'callbacks', None):
+            for cbtype in entry.callbacks:
+                koji.plugin.register_callback(cbtype, entry)
+
+    def registerEntries(self, vars):
+        """Register task handlers and other plugins"""
+        for v in vars.values():
+            self.registerHandler(v)
+            self.registerCallback(v)
 
     def scanPlugin(self, plugin):
         """Find task handlers in a plugin"""
-        self.findHandlers(vars(plugin))
+        self.registerEntries(vars(plugin))
 
     def shutdown(self):
         """Attempt to shut down cleanly"""
         for task_id in self.pids.keys():
             self.cleanupTask(task_id)
         self.session.host.freeTasks(self.tasks.keys())
-        self.session.host.updateHost(task_load=0.0,ready=False)
+        self.session.host.updateHost(task_load=0.0, ready=False)
 
     def updateBuildroots(self, nolocal=False):
         """Handle buildroot cleanup/maintenance
@@ -511,10 +595,10 @@ class TaskManager(object):
         If nolocal is True, do not try to scan local buildroots.
         """
         #query buildroots in db that are not expired
-        states = [ koji.BR_STATES[x] for x in ('INIT','WAITING','BUILDING') ]
-        db_br = self.session.listBuildroots(hostID=self.host_id,state=tuple(states))
+        states = [koji.BR_STATES[x] for x in ('INIT', 'WAITING', 'BUILDING')]
+        db_br = self.session.listBuildroots(hostID=self.host_id, state=tuple(states))
         # index by id
-        db_br = dict([(row['id'],row) for row in db_br])
+        db_br = dict([(row['id'], row) for row in db_br])
         st_expired = koji.BR_STATES['EXPIRED']
         for id, br in db_br.items():
             task_id = br['task_id']
@@ -522,19 +606,19 @@ class TaskManager(object):
                 # not associated with a task
                 # this makes no sense now, but may in the future
                 self.logger.warn("Expiring taskless buildroot: %(id)i/%(tag_name)s/%(arch)s" % br)
-                self.session.host.setBuildRootState(id,st_expired)
-            elif not self.tasks.has_key(task_id):
+                self.session.host.setBuildRootState(id, st_expired)
+            elif task_id not in self.tasks:
                 #task not running - expire the buildroot
                 #TODO - consider recycling hooks here (with strong sanity checks)
                 self.logger.info("Expiring buildroot: %(id)i/%(tag_name)s/%(arch)s" % br)
-                self.logger.debug("Buildroot task: %r, Current tasks: %r" % (task_id,self.tasks.keys()))
-                self.session.host.setBuildRootState(id,st_expired)
+                self.logger.debug("Buildroot task: %r, Current tasks: %r" % (task_id, self.tasks.keys()))
+                self.session.host.setBuildRootState(id, st_expired)
                 continue
         if nolocal:
             return
         local_br = self._scanLocalBuildroots()
         # get info on local_only buildroots (most likely expired)
-        local_only = [id for id in local_br.iterkeys() if not db_br.has_key(id)]
+        local_only = [id for id in local_br.iterkeys() if id not in db_br]
         if local_only:
             missed_br = self.session.listBuildroots(buildrootID=tuple(local_only))
             #get all the task info in one call
@@ -544,8 +628,8 @@ class TaskManager(object):
                 if task_id:
                     tasks.append(task_id)
             #index
-            missed_br = dict([(row['id'],row) for row in missed_br])
-            tasks = dict([(row['id'],row) for row in self.session.getTaskInfo(tasks)])
+            missed_br = dict([(row['id'], row) for row in missed_br])
+            tasks = dict([(row['id'], row) for row in self.session.getTaskInfo(tasks)])
             for id in local_only:
                 # Cleaning options
                 #   - wait til later
@@ -578,7 +662,7 @@ class TaskManager(object):
                     rootdir = "%s/root" % topdir
                     try:
                         st = os.lstat(rootdir)
-                    except OSError, e:
+                    except OSError as e:
                         if e.errno == errno.ENOENT:
                             rootdir = None
                         else:
@@ -599,25 +683,25 @@ class TaskManager(object):
                     #also remove the config
                     try:
                         os.unlink(data['cfg'])
-                    except OSError, e:
+                    except OSError as e:
                         self.logger.warn("%s: can't remove config: %s" % (desc, e))
                 elif age > 120:
                     if rootdir:
                         try:
                             flist = os.listdir(rootdir)
-                        except OSError, e:
+                        except OSError as e:
                             self.logger.warn("%s: can't list rootdir: %s" % (desc, e))
                             continue
                         if flist:
                             self.logger.info("%s: clearing rootdir" % desc)
                         for fn in flist:
-                            safe_rmtree("%s/%s" % (rootdir,fn), unmount=True, strict=False)
+                            safe_rmtree("%s/%s" % (rootdir, fn), unmount=True, strict=False)
                         resultdir = "%s/result" % topdir
                         if os.path.isdir(resultdir):
                             self.logger.info("%s: clearing resultdir" % desc)
                             safe_rmtree(resultdir, unmount=True, strict=False)
                 else:
-                    self.logger.debug("Recent buildroot: %s: %i seconds" % (desc,age))
+                    self.logger.debug("Recent buildroot: %s: %i seconds" % (desc, age))
         self.logger.debug("Local buildroots: %d" % len(local_br))
         self.logger.debug("Active buildroots: %d" % len(db_br))
         self.logger.debug("Expired/stray buildroots: %d" % len(local_only))
@@ -629,10 +713,10 @@ class TaskManager(object):
         for f in os.listdir(configdir):
             if not f.endswith('.cfg'):
                 continue
-            fn = "%s/%s" % (configdir,f)
+            fn = "%s/%s" % (configdir, f)
             if not os.path.isfile(fn):
                 continue
-            fo = file(fn,'r')
+            fo = open(fn, 'r')
             id = None
             name = None
             for n in xrange(10):
@@ -681,16 +765,16 @@ class TaskManager(object):
             # the tasks returned are those that are open and locked
             # by this host.
             id = task['id']
-            if not self.pids.has_key(id):
+            if id not in self.pids:
                 #We don't have a process for this
                 #Expected to happen after a restart, otherwise this is an error
                 stale.append(id)
                 continue
             tasks[id] = task
-            if task.get('alert',False):
+            if task.get('alert', False):
                 #wake up the process
                 self.logger.info("Waking up task: %r" % task)
-                os.kill(self.pids[id],signal.SIGUSR2)
+                os.kill(self.pids[id], signal.SIGUSR2)
             if not task['waiting']:
                 task_load += task['weight']
         self.logger.debug("Task Load: %s" % task_load)
@@ -707,10 +791,10 @@ class TaskManager(object):
                 # the subprocess handles most everything, we just need to clear things out
                 if self.cleanupTask(id, wait=False):
                     del self.pids[id]
-                if self.tasks.has_key(id):
+                if id in self.tasks:
                     del self.tasks[id]
         for id, pid in self.pids.items():
-            if not tasks.has_key(id):
+            if id not in tasks:
                 # expected to happen when:
                 #  - we are in the narrow gap between the time the task
                 #    records its result and the time the process actually
@@ -719,21 +803,21 @@ class TaskManager(object):
                 #  - task is forcibly reassigned/unassigned
                 tinfo = self.session.getTaskInfo(id)
                 if tinfo is None:
-                    raise koji.GenericError, "Invalid task %r (pid %r)" % (id,pid)
+                    raise koji.GenericError("Invalid task %r (pid %r)" % (id, pid))
                 elif tinfo['state'] == koji.TASK_STATES['CANCELED']:
-                    self.logger.info("Killing canceled task %r (pid %r)" % (id,pid))
+                    self.logger.info("Killing canceled task %r (pid %r)" % (id, pid))
                     if self.cleanupTask(id):
                         del self.pids[id]
                 elif tinfo['host_id'] != self.host_id:
-                    self.logger.info("Killing reassigned task %r (pid %r)" % (id,pid))
+                    self.logger.info("Killing reassigned task %r (pid %r)" % (id, pid))
                     if self.cleanupTask(id):
                         del self.pids[id]
                 else:
-                    self.logger.info("Lingering task %r (pid %r)" % (id,pid))
+                    self.logger.info("Lingering task %r (pid %r)" % (id, pid))
 
     def getNextTask(self):
         self.ready = self.readyForTask()
-        self.session.host.updateHost(self.task_load,self.ready)
+        self.session.host.updateHost(self.task_load, self.ready)
         if not self.ready:
             self.logger.info("Not ready for task")
             return False
@@ -753,8 +837,8 @@ class TaskManager(object):
                 our_avail = host['capacity'] - host['task_load']
             for chan in host['channels']:
                 for arch in host['arches'].split() + ['noarch']:
-                    bin = "%s:%s" % (chan,arch)
-                    bin_hosts.setdefault(bin,[]).append(host)
+                    bin = "%s:%s" % (chan, arch)
+                    bin_hosts.setdefault(bin, []).append(host)
                     if host['id'] == self.host_id:
                         bins[bin] = 1
         self.logger.debug("bins: %r" % bins)
@@ -763,7 +847,7 @@ class TaskManager(object):
             return False
         elif not bins:
             self.logger.info("No bins for this host. Missing channel/arch config?")
-            return False
+            # Note: we may still take an assigned task below
         #sort available capacities for each of our bins
         avail = {}
         for bin in bins.iterkeys():
@@ -776,7 +860,7 @@ class TaskManager(object):
             if task['method'] not in self.handlers:
                 self.logger.warn("Skipping task %(id)i, no handler for method %(method)s", task)
                 continue
-            if self.tasks.has_key(task['id']):
+            if task['id'] in self.tasks:
                 # we were running this task, but it apparently has been
                 # freed or reassigned. We can't do anything with it until
                 # updateTasks notices this and cleans up.
@@ -791,7 +875,7 @@ class TaskManager(object):
             elif task['state'] == koji.TASK_STATES['FREE']:
                 bin = "%(channel_id)s:%(arch)s" % task
                 self.logger.debug("task is free, bin=%r" % bin)
-                if not bins.has_key(bin):
+                if bin not in bins:
                     continue
                 #see where our available capacity is compared to other hosts for this bin
                 #(note: the hosts in this bin are exactly those that could
@@ -808,7 +892,7 @@ class TaskManager(object):
                     return True
             else:
                 #should not happen
-                raise Exception, "Invalid task state reported by server"
+                raise Exception("Invalid task state reported by server")
         return False
 
     def checkRelAvail(self, bin_avail, avail):
@@ -829,11 +913,11 @@ class TaskManager(object):
         if pid is None:
             pid = self.pids.get(task_id)
             if not pid:
-                raise koji.GenericError, "No pid for task %i" % task_id
+                raise koji.GenericError("No pid for task %i" % task_id)
         prefix = "Task %i (pid %i)" % (task_id, pid)
         try:
             (childpid, status) = os.waitpid(pid, os.WNOHANG)
-        except OSError, e:
+        except OSError as e:
             #check errno
             if e.errno != errno.ECHILD:
                 #should not happen
@@ -874,7 +958,7 @@ class TaskManager(object):
 
             try:
                 os.kill(pid, sig)
-            except OSError, e:
+            except OSError as e:
                 # process probably went away, we'll find out on the next iteration
                 self.logger.info('Error sending signal %i to %s (pid %i, taskID %i): %s' %
                                  (sig, execname, pid, task_id, e))
@@ -898,21 +982,21 @@ class TaskManager(object):
             proc_path = '/proc/%i/stat' % pid
             if not os.path.isfile(proc_path):
                 return None
-            proc_file = file(proc_path)
+            proc_file = open(proc_path)
             procstats = [not field.isdigit() and field or int(field) for field in proc_file.read().split()]
             proc_file.close()
 
             cmd_path = '/proc/%i/cmdline' % pid
             if not os.path.isfile(cmd_path):
                 return None
-            cmd_file = file(cmd_path)
+            cmd_file = open(cmd_path)
             procstats[1] = cmd_file.read().replace('\0', ' ').strip()
             cmd_file.close()
             if not procstats[1]:
                 return None
 
             return procstats
-        except IOError, e:
+        except IOError:
             # process may have already gone away
             return None
 
@@ -974,7 +1058,7 @@ class TaskManager(object):
         """
         pid = self.pids.get(task_id)
         if not pid:
-            raise koji.GenericError, "No pid for task %i" % task_id
+            raise koji.GenericError("No pid for task %i" % task_id)
         children = self._childPIDs(pid)
         if children:
             # send SIGINT once to let mock mock try to clean up
@@ -1006,7 +1090,7 @@ class TaskManager(object):
         br_path = self.options.mockdir
         if not os.path.exists(br_path):
             self.logger.error("No such directory: %s" % br_path)
-            raise IOError, "No such directory: %s" % br_path
+            raise IOError("No such directory: %s" % br_path)
         fs_stat = os.statvfs(br_path)
         available = fs_stat.f_bavail * fs_stat.f_bsize
         availableMB = available / 1024 / 1024
@@ -1028,7 +1112,7 @@ class TaskManager(object):
         #                       df -iP path ?
         #               memory (meminfo/vmstat)
         #                       vmstat fields 3-6 (also 7-8 for swap)
-        #                       http://www.redhat.com/advice/tips/meminfo.html
+        #                       https://www.redhat.com/advice/tips/meminfo.html
         #               cpu cycles (vmstat?)
         #                       vmstat fields 13-16 (and others?)
         #       others?:
@@ -1069,17 +1153,17 @@ class TaskManager(object):
         #XXX - add more checks
         return True
 
-    def takeTask(self,task):
+    def takeTask(self, task):
         """Attempt to open the specified task
 
         Returns True if successful, False otherwise
         """
         self.logger.info("Attempting to take task %s" % task['id'])
         method = task['method']
-        if self.handlers.has_key(method):
+        if method in self.handlers:
             handlerClass = self.handlers[method]
         else:
-            raise koji.GenericError, "No handler found for method '%s'" % method
+            raise koji.GenericError("No handler found for method '%s'" % method)
         task_info = self.session.getTaskInfo(task['id'], request=True)
         if task_info.get('request') is None:
             self.logger.warn("Task '%s' has no request" % task['id'])
@@ -1089,7 +1173,7 @@ class TaskManager(object):
         if hasattr(handler, 'checkHost'):
             try:
                 valid_host = handler.checkHost(self.hostdata)
-            except (SystemExit,KeyboardInterrupt):
+            except (SystemExit, KeyboardInterrupt):
                 raise
             except:
                 valid_host = False
@@ -1103,7 +1187,6 @@ class TaskManager(object):
             self.logger.warn("Could not open")
             return False
         task_id = data['id']
-        request = data['request']
         self.tasks[task_id] = data
         # set weight
         try:
@@ -1129,7 +1212,7 @@ class TaskManager(object):
             self.subsessions[task_id] = session_id
         return True
 
-    def forkTask(self,handler):
+    def forkTask(self, handler):
         #get the subsession before we fork
         newhub = self.session.subsession()
         session_id = newhub.sinfo['session-id']
@@ -1147,7 +1230,7 @@ class TaskManager(object):
             self.session = newhub
             handler.session = self.session
             #set a do-nothing handler for sigusr2
-            signal.signal(signal.SIGUSR2,lambda *args: None)
+            signal.signal(signal.SIGUSR2, lambda *args: None)
             self.runTask(handler)
         finally:
             #diediedie
@@ -1156,19 +1239,19 @@ class TaskManager(object):
             finally:
                 os._exit(0)
 
-    def runTask(self,handler):
+    def runTask(self, handler):
         try:
             response = (handler.run(),)
             # note that we wrap response in a singleton tuple
-            response = xmlrpclib.dumps(response, methodresponse=1, allow_none=1)
+            response = koji.xmlrpcplus.dumps(response, methodresponse=1, allow_none=1)
             self.logger.info("RESPONSE: %r" % response)
             self.session.host.closeTask(handler.id, response)
             return
-        except xmlrpclib.Fault, fault:
-            response = xmlrpclib.dumps(fault)
+        except koji.xmlrpcplus.Fault as fault:
+            response = koji.xmlrpcplus.dumps(fault)
             tb = ''.join(traceback.format_exception(*sys.exc_info())).replace(r"\n", "\n")
             self.logger.warn("FAULT:\n%s" % tb)
-        except (SystemExit,koji.tasks.ServerExit,KeyboardInterrupt):
+        except (SystemExit, koji.tasks.ServerExit, KeyboardInterrupt):
             #we do not trap these
             raise
         except koji.tasks.ServerRestart:
@@ -1180,11 +1263,11 @@ class TaskManager(object):
             self.logger.warn("TRACEBACK: %s" % tb)
             # report exception back to server
             e_class, e = sys.exc_info()[:2]
-            faultCode = getattr(e_class,'faultCode',1)
+            faultCode = getattr(e_class, 'faultCode', 1)
             if issubclass(e_class, koji.GenericError):
                 #just pass it through
                 tb = str(e)
-            response = xmlrpclib.dumps(xmlrpclib.Fault(faultCode, tb))
+            response = koji.xmlrpcplus.dumps(koji.xmlrpcplus.Fault(faultCode, tb))
 
         # if we get here, then we're handling an exception, so fail the task
         self.session.host.failTask(handler.id, response)

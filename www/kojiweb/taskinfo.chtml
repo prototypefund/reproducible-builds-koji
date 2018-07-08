@@ -164,7 +164,9 @@ $value
         #if $len($params) > 2
         $printOpts($params[2])
         #end if
-        #elif $task.method == 'livecd' or $task.method == 'appliance'
+        #elif $task.method == 'livecd' or $task.method == 'appliance' or $task.method == 'livemedia'
+        <strong>Name:</strong> $params[0]<br/>
+        <strong>Version:</strong> $params[1]<br/>
         <strong>Arch:</strong> $params[2]<br/>
         <strong>Build Target:</strong> <a href="buildtargetinfo?name=$params[3]">$params[3]</a><br/>
         <strong>Kickstart File:</strong> $params[4]<br/>
@@ -174,7 +176,7 @@ $value
         <strong>Build Target:</strong> <a href="buildtargetinfo?name=$params[3]">$params[3]</a><br/>
         <strong>Installation Tree:</strong> $params[4]<br/>
         $printOpts($params[5])
-        #elif $task.method == 'createLiveCD' or $task.method == 'createAppliance'
+        #elif $task.method == 'createLiveCD' or $task.method == 'createAppliance' or $task.method == 'createLiveMedia'
         #if $len($params) > 4:
         ## new method signature
         <strong>Arch:</strong> $params[3]<br/>
@@ -219,8 +221,13 @@ $value
         #elif $task.method == 'newRepo'
         <strong>Tag:</strong> <a href="taginfo?tagID=$tag.id">$tag.name</a><br/>
         #if $len($params) > 1
-        $printOpts($params[1])
+          $printOpts($params[1])
         #end if
+        #elif $task.method == 'distRepo'
+        <strong>Tag:</strong> <a href="taginfo?tagID=$tag.id">$tag.name</a><br/>
+        <strong>Repo ID:</strong> <a href="$pathinfo.distrepo($params[1],$tag.name)">$params[1]</a></br>
+        <strong>Keys:</strong> $printValue(0, $params[2])<br/>
+        $printOpts($params[3])
         #elif $task.method == 'prepRepo'
         <strong>Tag:</strong> <a href="taginfo?tagID=$params[0].id">$params[0].name</a>
         #elif $task.method == 'createrepo'
@@ -228,12 +235,18 @@ $value
         <strong>Arch:</strong> $params[1]<br/>
         #set $oldrepo = $params[2]
         #if $oldrepo
-        <strong>Old Repo ID:</strong> $oldrepo.id<br/>
-        <strong>Old Repo Creation:</strong> $koji.formatTimeLong($oldrepo.creation_time)<br/>
+            <strong>Old Repo ID:</strong> $oldrepo.id<br/>
+            <strong>Old Repo Creation:</strong> $koji.formatTimeLong($oldrepo.creation_time)<br/>
         #end if
-        #if $len($params) > 3
-        <strong>External Repos:</strong> $printValue(None, [ext['external_repo_name'] for ext in $params[3]])<br/>
+        #if $len($params) > 4 and $params[4]
+            <strong>External Repos:</strong> $printValue(None, [ext['external_repo_name'] for ext in $params[3]])<br/>
         #end if
+        #elif $task.method == 'createdistrepo'
+        <strong>Tag:</strong> <a href="taginfo?tagID=$tag.id">$tag.name</a><br/>
+        <strong>Repo ID:</strong> <a href="$pathinfo.distrepo($params[1],$tag.name)">$params[1]</a></br>
+        <strong>Arch:</strong> $printValue(0, $params[2])<br/>
+        <strong>Keys:</strong> $printValue(0, $params[3])<br/>
+        <strong>Options:</strong> $printMap($params[4], '&nbsp;&nbsp;&nbsp;&nbsp;')
         #elif $task.method == 'dependantTask'
         <strong>Dependant Tasks:</strong><br/>
         #for $dep in $deps
@@ -272,6 +285,11 @@ $value
         <strong>Host:</strong> <a href="hostinfo?hostID=$params[1].id">$params[1].name</a><br/>
         <strong>Restart Task:</strong>
             <a href="taskinfo?taskID=$rtask.id" class="task$util.taskState($rtask.state)">$koji.taskLabel($rtask)</a><br/>
+        #elif $task.method == 'runroot'
+        <strong>Build Tag:</strong> <a href="taginfo?tagID=$params[0]">$params[0]</a><br/>
+        <strong>Arch:</strong> $params[1]<br/>
+        $printOpts($params[3])
+        <strong>Commands:</strong> $params[2]<br/>
         #else
         $params
         #end if
@@ -386,36 +404,34 @@ $value
     <tr>
       <th>Result</th>
       <td>
-        <a href="#" collapse" id="toggle-result" style="display: none;">Show results</a>
-        <div id="result">
-        #if $excClass
-          <pre>
-          #if $hasattr($result, 'faultString')
-$cgi.escape($result.faultString.strip())
-          #else
-${excClass.__name__}: $cgi.escape($str($result))
-          #end if
-          </pre>
-        #elif $isinstance($result, dict)
-        $printMap($result)
-        #else
-        $printValue('', $result)
-        #end if
+      #if $abbr_result_text
+        <div id="abbr-result">
+        $abbr_result_text
         </div>
+        <div id="full-result">
+        $full_result_text
+        </div>
+        <a href="#" collapse" id="toggle-abbreviated-result" style="display: none;">Show abbreviated results</a>
+        <a href="#" collapse" id="toggle-full-result" style="display: none;">Show complete results</a>
+      #else
+         <div id="result">
+        $full_result_text
+        </div>
+      #end if
       </td>
     </tr>
     <tr>
       <th>Output</th>
       <td>
-        #for $filename in $output
-        <a href="$pathinfo.task($task.id)/$urllib.quote($filename)">$filename</a>
+        #for $volume, $filename in $output
+        <a href="$pathinfo.task($task.id, volume=$volume)/$urllib.quote($filename)">$filename</a>
            #if $filename.endswith('.log')
-           (<a href="getfile?taskID=$task.id&name=$urllib.quote($filename)&offset=-4000">tail</a>)
+           (<a href="getfile?taskID=$task.id&volume=$volume&name=$urllib.quote($filename)&offset=-4000">tail</a>)
            #end if
         <br/>
         #end for
         #if $task.state not in ($koji.TASK_STATES.CLOSED, $koji.TASK_STATES.CANCELED, $koji.TASK_STATES.FAILED) and \
-            $task.method in ('buildSRPMFromSCM', 'buildArch', 'livecd', 'appliance', 'buildMaven', 'wrapperRPM', 'vmExec', 'createrepo')
+            $task.method in ('buildSRPMFromSCM', 'buildArch', 'createLiveMedia', 'buildMaven', 'wrapperRPM', 'vmExec', 'createrepo', 'runroot', 'createAppliance', 'createLiveCD')
         <br/>
         <a href="watchlogs?taskID=$task.id">Watch logs</a>
         #end if
@@ -423,25 +439,36 @@ ${excClass.__name__}: $cgi.escape($str($result))
     </tr>
   </table>
 
+#if $abbr_result_text
   <script type="text/javascript">
     (function() {
-       var r = document.getElementById('result'),
-       t = document.getElementById('toggle-result');
-       r.style.display = 'none';
-       t.style.display = 'block';
-       t.text = 'Show result';
-       t.onclick = function(e) {
-         if(r.style.display == 'none') {
-           r.style.display = 'block';
-           t.text = 'Hide result';
-           }
+       var abbr = document.getElementById('abbr-result');
+       var full = document.getElementById('full-result');
+       var link_to_show_abbr = document.getElementById('toggle-abbreviated-result');
+       var link_to_show_full = document.getElementById('toggle-full-result');
+       full.style.display = 'none';
+       abbr.style.display = 'block'
+       link_to_show_full.style.display = 'inline'
+       link_to_show_abbr.style.display = 'none'
+       var trigger = function(e) {
+         if (link_to_show_abbr.style.display == 'none') {
+           link_to_show_abbr.style.display = 'inline'
+           link_to_show_full.style.display = 'none'
+           abbr.style.display = 'none';
+           full.style.display = 'block'
+         }
          else {
-           r.style.display = 'none';
-           t.text = 'Show result';
+           link_to_show_abbr.style.display = 'none'
+           link_to_show_full.style.display = 'inline'
+           abbr.style.display = 'block';
+           full.style.display = 'none'
          }
          return false;
        };
+
+       link_to_show_full.onclick = trigger
+       link_to_show_abbr.onclick = trigger
     })();
   </script>
-
+#end if
 #include "includes/footer.chtml"

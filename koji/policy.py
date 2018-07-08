@@ -18,6 +18,8 @@
 #       Mike McLean <mikem@redhat.com>
 
 import fnmatch
+import logging
+
 import koji
 
 
@@ -69,10 +71,11 @@ class HasTest(BaseSimpleTest):
     name = "has"
 
     def __init__(self, str):
+        super(HasTest, self).__init__(str)
         try:
             self.field = str.split()[1]
         except IndexError:
-            raise koji.GenericError, "Invalid or missing field in policy test"
+            raise koji.GenericError("Invalid or missing field in policy test")
 
     def run(self, data):
         return self.field in data
@@ -141,12 +144,12 @@ class CompareTest(BaseSimpleTest):
     allow_float = True
 
     operators = {
-        '<' : lambda a, b: a < b,
-        '>' : lambda a, b: a > b,
-        '<=' : lambda a, b: a <= b,
-        '>=' : lambda a, b: a >= b,
-        '=' : lambda a, b: a == b,
-        '!=' : lambda a, b: a != b,
+        '<': lambda a, b: a < b,
+        '>': lambda a, b: a > b,
+        '<=': lambda a, b: a <= b,
+        '>=': lambda a, b: a >= b,
+        '=': lambda a, b: a == b,
+        '!=': lambda a, b: a != b,
         }
 
     def __init__(self, str):
@@ -160,7 +163,7 @@ class CompareTest(BaseSimpleTest):
             cmp, value = str.split(None, 2)[1:]
         self.func = self.operators.get(cmp, None)
         if self.func is None:
-            raise koji.GenericError, "Invalid comparison in test."
+            raise koji.GenericError("Invalid comparison in test.")
         try:
             self.value = int(value)
         except ValueError:
@@ -179,6 +182,7 @@ class SimpleRuleSet(object):
         self.rules = self.parse_rules(rules)
         self.lastrule = None
         self.lastaction = None
+        self.logger = logging.getLogger('koji.policy')
 
     def parse_rules(self, lines):
         """Parse rules into a ruleset data structure
@@ -217,13 +221,13 @@ class SimpleRuleSet(object):
                 cursor = child
             elif action == '}':
                 if not stack:
-                    raise koji.GenericError, "nesting error in rule set"
+                    raise koji.GenericError("nesting error in rule set")
                 cursor = stack.pop()
             else:
                 cursor.append(rule)
         if stack:
             # unclosed {
-            raise koji.GenericError, "nesting error in rule set"
+            raise koji.GenericError("nesting error in rule set")
 
     def parse_line(self, line):
         """Parse line as a rule
@@ -258,7 +262,7 @@ class SimpleRuleSet(object):
         if pos == -1:
             pos = line.rfind('!!')
             if pos == -1:
-                raise Exception, "bad policy line: %s" % line
+                raise Exception("bad policy line: %s" % line)
             negate = True
         tests = line[:pos]
         action = line[pos+2:]
@@ -268,11 +272,11 @@ class SimpleRuleSet(object):
         return tests, negate, action
 
     def get_test_handler(self, str):
-        name = str.split(None,1)[0]
+        name = str.split(None, 1)[0]
         try:
             return self.tests[name](str)
         except KeyError:
-            raise koji.GenericError, "missing test handler: %s" % name
+            raise koji.GenericError("missing test handler: %s" % name)
 
     def all_actions(self):
         """report a list of all actions in the ruleset
@@ -284,7 +288,7 @@ class SimpleRuleSet(object):
                 if isinstance(action, list):
                     _recurse(action, index)
                 else:
-                    name = action.split(None,1)[0]
+                    name = action.split(None, 1)[0]
                     index[name] = 1
         index = {}
         _recurse(self.ruleset, index)
@@ -296,7 +300,9 @@ class SimpleRuleSet(object):
                 self.lastrule = []
             value = False
             for test in tests:
-                if not test.run(data):
+                check = test.run(data)
+                self.logger.debug("%s -> %s", test, check)
+                if not check:
                     break
             else:
                 #all tests in current rule passed
@@ -306,6 +312,7 @@ class SimpleRuleSet(object):
             if value:
                 self.lastrule.append([tests, negate])
                 if isinstance(action, list):
+                    self.logger.debug("matched: entering subrule")
                     # action is a list of subrules
                     ret = self._apply(action, data)
                     if ret is not None:
@@ -313,12 +320,15 @@ class SimpleRuleSet(object):
                     # if ret is None, then none of the subrules matched,
                     # so we keep going
                 else:
+                    self.logger.debug("matched: action=%s", action)
                     return action
         return None
 
     def apply(self, data):
+        self.logger.debug("policy start")
         self.lastrule = []
         self.lastaction = self._apply(self.ruleset, data, top=True)
+        self.logger.debug("policy done")
         return self.lastaction
 
     def last_rule(self):
@@ -328,9 +338,9 @@ class SimpleRuleSet(object):
         for (tests, negate) in self.lastrule:
             line = '&&'.join([str(t) for t in tests])
             if negate:
-                line += ' !! '
+                line += '!! '
             else:
-                line += ' :: '
+                line += ':: '
             ret.append(line)
         ret = '... '.join(ret)
         if self.lastaction is None:
@@ -357,7 +367,7 @@ def findSimpleTests(namespace):
                 # this module contains generic tests, so it is valid to include it
                 # in the namespace list
                 continue
-            if type(value) == type(BaseSimpleTest) and issubclass(value, BaseSimpleTest):
+            if isinstance(value, type(BaseSimpleTest)) and issubclass(value, BaseSimpleTest):
                 name = getattr(value, 'name', None)
                 if not name:
                     #use the class name

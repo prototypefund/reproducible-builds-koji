@@ -24,6 +24,8 @@ import koji
 import logging
 import sys
 import traceback
+import six
+from koji.util import encode_datetime_recurse
 
 # the available callback hooks and a list
 # of functions to be called for each event
@@ -45,7 +47,11 @@ callbacks = {
     'preRepoInit':            [],
     'postRepoInit':           [],
     'preRepoDone':            [],
-    'postRepoDone':           []
+    'postRepoDone':           [],
+    'preCommit':              [],
+    'postCommit':             [],
+    'preSCMCheckout':         [],
+    'postSCMCheckout':        [],
     }
 
 class PluginTracker(object):
@@ -57,7 +63,7 @@ class PluginTracker(object):
         self.plugins = {}
 
     def load(self, name, path=None, reload=False):
-        if self.plugins.has_key(name) and not reload:
+        if name in self.plugins and not reload:
             return self.plugins[name]
         mod_name = name
         if self.prefix:
@@ -65,15 +71,19 @@ class PluginTracker(object):
             #Using a prefix helps prevent overlap with other modules
             #(no '.' -- it causes problems)
             mod_name = self.prefix + name
-        if sys.modules.has_key(mod_name) and not reload:
-            raise koji.PluginError, 'module name conflict: %s' % mod_name
+        if mod_name in sys.modules and not reload:
+            raise koji.PluginError('module name conflict: %s' % mod_name)
         if path is None:
             path = self.searchpath
         if path is None:
-            raise koji.PluginError, "empty module search path"
+            raise koji.PluginError("empty module search path")
         file, pathname, description = imp.find_module(name, self.pathlist(path))
         try:
             plugin = imp.load_module(mod_name, file, pathname, description)
+        except Exception:
+            msg = 'Loading plugin %s failed' % name
+            logging.getLogger('koji.plugin').error(msg)
+            raise
         finally:
             file.close()
         self.plugins[name] = plugin
@@ -83,7 +93,7 @@ class PluginTracker(object):
         return self.plugins.get(name)
 
     def pathlist(self, path):
-        if isinstance(path, basestring):
+        if isinstance(path, six.string_types):
             return [path]
         else:
             return path
@@ -97,6 +107,15 @@ def export(f):
     the HandlerRegistry will export the function under its own name
     """
     setattr(f, 'exported', True)
+    return f
+
+def export_cli(f):
+    """a decorator that marks a function as exported for CLI
+
+    intended to be used by plugins
+    the HandlerRegistry will export the function under its own name
+    """
+    setattr(f, 'exported_cli', True)
     return f
 
 def export_as(alias):
@@ -147,23 +166,50 @@ def ignore_error(f):
     setattr(f, 'failure_is_an_option', True)
     return f
 
+
+def convert_datetime(f):
+    """Indicate that callback needs to receive datetime objects as strings"""
+    setattr(f, 'convert_datetime', True)
+    return f
+
+
 def register_callback(cbtype, func):
     if not cbtype in callbacks:
-        raise koji.PluginError, '"%s" is not a valid callback type' % cbtype
+        raise koji.PluginError('"%s" is not a valid callback type' % cbtype)
     if not callable(func):
-        raise koji.PluginError, '%s is not callable' % getattr(func, '__name__', 'function')
+        raise koji.PluginError('%s is not callable' % getattr(func, '__name__', 'function'))
     callbacks[cbtype].append(func)
+
 
 def run_callbacks(cbtype, *args, **kws):
     if not cbtype in callbacks:
-        raise koji.PluginError, '"%s" is not a valid callback type' % cbtype
+        raise koji.PluginError('"%s" is not a valid callback type' % cbtype)
+    cache = {}
     for func in callbacks[cbtype]:
+        cb_args, cb_kwargs = _fix_cb_args(func, args, kws, cache)
         try:
-            func(cbtype, *args, **kws)
+            func(cbtype, *cb_args, **cb_kwargs)
         except:
             msg = 'Error running %s callback from %s' % (cbtype, func.__module__)
             if getattr(func, 'failure_is_an_option', False):
                 logging.getLogger('koji.plugin').warn(msg, exc_info=True)
             else:
                 tb = ''.join(traceback.format_exception(*sys.exc_info()))
-                raise koji.CallbackError, '%s:\n%s' % (msg, tb)
+                raise koji.CallbackError('%s:\n%s' % (msg, tb))
+
+
+def _fix_cb_args(func, args, kwargs, cache):
+    if getattr(func, 'convert_datetime', False):
+        if id(args) in cache:
+            args = cache[id(args)]
+        else:
+            val = encode_datetime_recurse(args)
+            cache[id(args)] = val
+            args = val
+        if id(kwargs) in cache:
+            kwargs = cache[id(kwargs)]
+        else:
+            val = encode_datetime_recurse(kwargs)
+            cache[id(kwargs)] = val
+            kwargs = val
+    return args, kwargs
