@@ -18,7 +18,10 @@
 #       Mike McLean <mikem@redhat.com>
 #       Mike Bonnet <mikeb@redhat.com>
 
+from __future__ import absolute_import
 import calendar
+import datetime
+from koji.xmlrpcplus import DateTime
 from fnmatch import fnmatch
 import koji
 import logging
@@ -26,23 +29,36 @@ import os
 import os.path
 import re
 import resource
+import shutil
 import stat
 import sys
 import time
-import ConfigParser
+import six.moves.configparser
 from zlib import adler32
+from six.moves import range
+import six
+import warnings
 
+# imported from kojiweb and kojihub
 try:
     from hashlib import md5 as md5_constructor
-except ImportError:
+except ImportError:  # pragma: no cover
     from md5 import new as md5_constructor
 try:
     from hashlib import sha1 as sha1_constructor
-except ImportError:
+except ImportError:  # pragma: no cover
     from sha import new as sha1_constructor
+
+
+def deprecated(message):
+    """Print deprecation warning"""
+    with warnings.catch_warnings():
+        warnings.simplefilter('always', DeprecationWarning)
+        warnings.warn(message, DeprecationWarning)
 
 def _changelogDate(cldate):
     return time.strftime('%a %b %d %Y', time.strptime(koji.formatTime(cldate), '%Y-%m-%d %H:%M:%S'))
+
 
 def formatChangelog(entries):
     """Format a list of changelog entries (dicts)
@@ -52,9 +68,9 @@ def formatChangelog(entries):
         result += """* %s %s
 %s
 
-""" % (_changelogDate(entry['date']), entry['author'].encode("utf-8"),
-       entry['text'].encode("utf-8"))
-
+""" % (_changelogDate(entry['date']),
+       koji._fix_print(entry['author']),
+       koji._fix_print(entry['text']))
     return result
 
 DATE_RE = re.compile(r'(\d+)-(\d+)-(\d+)')
@@ -78,7 +94,8 @@ def parseTime(val):
     result = TIME_RE.search(rest)
     if result:
         time = [int(r) for r in result.groups()]
-    return calendar.timegm(date + time + [0, 0, 0])
+    return calendar.timegm(
+            datetime.datetime(*(date + time)).timetuple())
 
 def checkForBuilds(session, tag, builds, event, latest=False):
     """Check that the builds existed in tag at the time of the event.
@@ -122,7 +139,7 @@ def multi_fnmatch(s, patterns):
 
     If patterns is a string, it will be split() first
     """
-    if isinstance(patterns, basestring):
+    if isinstance(patterns, six.string_types):
         patterns = patterns.split()
     for pat in patterns:
         if fnmatch(s, pat):
@@ -133,7 +150,7 @@ def dslice(dict, keys, strict=True):
     """Returns a new dictionary containing only the specified keys"""
     ret = {}
     for key in keys:
-        if strict or dict.has_key(key):
+        if strict or key in dict:
             #for strict we skip the has_key check and let the dict generate the KeyError
             ret[key] = dict[key]
     return ret
@@ -142,9 +159,54 @@ def dslice_ex(dict, keys, strict=True):
     """Returns a new dictionary with only the specified keys removed"""
     ret = dict.copy()
     for key in keys:
-        if strict or ret.has_key(key):
+        if strict or key in ret:
             del ret[key]
     return ret
+
+
+class DataWalker(object):
+
+    def __init__(self, data, callback, kwargs=None):
+        self.data = data
+        self.callback = callback
+        if kwargs is None:
+            kwargs = {}
+        self.kwargs = kwargs
+
+    def walk(self):
+        return self._walk(self.data)
+
+    def _walk(self, value):
+        # recurse if needed
+        if isinstance(value, tuple):
+            value = tuple([self._walk(x) for x in value])
+        elif isinstance(value, list):
+            value = list([self._walk(x) for x in value])
+        elif isinstance(value, dict):
+            ret = {}
+            for k in value:
+                k = self._walk(k)
+                v = self._walk(value[k])
+                ret[k] = v
+            value = ret
+        # finally, let callback filter the value
+        return self.callback(value, **self.kwargs)
+
+
+def encode_datetime(value):
+    """Convert datetime objects to strings"""
+    if isinstance(value, datetime.datetime):
+        return value.isoformat(' ')
+    elif isinstance(value, DateTime):
+        return datetime.datetime(*value.timetuple()[:6]).isoformat(' ')
+    else:
+        return value
+
+
+def encode_datetime_recurse(value):
+    walker = DataWalker(value, encode_datetime)
+    return walker.walk()
+
 
 def call_with_argcheck(func, args, kwargs=None):
     """Call function, raising ParameterError if args do not match"""
@@ -152,13 +214,46 @@ def call_with_argcheck(func, args, kwargs=None):
         kwargs = {}
     try:
         return func(*args, **kwargs)
-    except TypeError, e:
+    except TypeError as e:
         if sys.exc_info()[2].tb_next is None:
             # The stack is only one high, so the error occurred in this function.
             # Therefore, we assume the TypeError is due to a parameter mismatch
             # in the above function call.
-            raise koji.ParameterError, str(e)
+            raise koji.ParameterError(str(e))
         raise
+
+
+def apply_argspec(argspec, args, kwargs=None):
+    """Apply an argspec to the given args and return a dictionary"""
+    if kwargs is None:
+        kwargs = {}
+    f_args, f_varargs, f_varkw, f_defaults = argspec
+    data = dict(zip(f_args, args))
+    if len(args) > len(f_args):
+        if not f_varargs:
+            raise koji.ParameterError('too many args')
+        data[f_varargs] = tuple(args[len(f_args):])
+    elif f_varargs:
+        data[f_varargs] = ()
+    if f_varkw:
+        data[f_varkw] = {}
+    for arg in kwargs:
+        if arg in data:
+            raise koji.ParameterError('duplicate keyword argument %r' % arg)
+        if arg in f_args:
+            data[arg] = kwargs[arg]
+        elif not f_varkw:
+            raise koji.ParameterError("unexpected keyword argument %r" % arg)
+        else:
+            data[f_varkw][arg] = kwargs[arg]
+    if f_defaults:
+        for arg, val in zip(f_args[-len(f_defaults):], f_defaults):
+            data.setdefault(arg, val)
+    for n, arg in enumerate(f_args):
+        if arg not in data:
+            raise koji.ParameterError('missing required argument %r (#%i)'
+                                        % (arg, n))
+    return data
 
 
 class HiddenValue(object):
@@ -236,11 +331,11 @@ class LazyDict(dict):
         return [(key, lazy_eval(val)) for key, val in super(LazyDict, self).items()]
 
     def itervalues(self):
-        for val in super(LazyDict, self).itervalues():
+        for val in six.itervalues(super(LazyDict, self)):
             yield lazy_eval(val)
 
     def iteritems(self):
-        for key, val in super(LazyDict, self).iteritems():
+        for key, val in six.iteritems(super(LazyDict, self)):
             yield key, lazy_eval(val)
 
     def pop(self, key, *args, **kwargs):
@@ -273,70 +368,92 @@ class LazyRecord(object):
 
 def lazysetattr(object, name, func, args, kwargs=None, cache=False):
     if not isinstance(object, LazyRecord):
-        raise TypeError, 'object does not support lazy attributes'
+        raise TypeError('object does not support lazy attributes')
     value = LazyValue(func, args, kwargs=kwargs, cache=cache)
     setattr(object, name, value)
 
 
 def rmtree(path):
     """Delete a directory tree without crossing fs boundaries"""
+    # implemented to avoid forming long paths
+    # see: https://pagure.io/koji/issue/201
     st = os.lstat(path)
     if not stat.S_ISDIR(st.st_mode):
-        raise koji.GenericError, "Not a directory: %s" % path
+        raise koji.GenericError("Not a directory: %s" % path)
     dev = st.st_dev
-    dirlist = []
-    for dirpath, dirnames, filenames in os.walk(path):
-        dirlist.append(dirpath)
-        newdirs = []
-        dirsyms = []
-        for fn in dirnames:
-            path = os.path.join(dirpath, fn)
-            st = os.lstat(path)
-            if st.st_dev != dev:
-                # don't cross fs boundary
-                continue
-            if stat.S_ISLNK(st.st_mode):
-                #os.walk includes symlinks to dirs here
-                dirsyms.append(fn)
-                continue
-            newdirs.append(fn)
-        #only walk our filtered dirs
-        dirnames[:] = newdirs
-        for fn in filenames + dirsyms:
-            path = os.path.join(dirpath, fn)
-            st = os.lstat(path)
-            if st.st_dev != dev:
-                #shouldn't happen, but just to be safe...
-                continue
-            os.unlink(path)
-    dirlist.reverse()
-    for dirpath in dirlist:
-        if os.listdir(dirpath):
-            # dir not empty. could happen if a mount was present
-            continue
-        os.rmdir(dirpath)
+    cwd = os.getcwd()
+    try:
+        os.chdir(path)
+        _rmtree(dev)
+    finally:
+        os.chdir(cwd)
+    os.rmdir(path)
 
-def _relpath(path, start=getattr(os.path, 'curdir', '.')):
-    """Backport of os.path.relpath for python<2.6"""
 
-    sep = getattr(os.path, 'sep', '/')
-    pardir = getattr(os.path, 'pardir', '..')
-    if not path:
-        raise ValueError("no path specified")
-    start_list = [x for x in os.path.abspath(start).split(sep) if x]
-    path_list = [x for x in os.path.abspath(path).split(sep) if x]
-    i = -1
-    for i in range(min(len(start_list), len(path_list))):
-        if start_list[i] != path_list[i]:
+def _rmtree(dev):
+    dirstack = []
+    while True:
+        dirs = _stripcwd(dev)
+        # if no dirs, walk back up until we find some
+        while not dirs and dirstack:
+            os.chdir('..')
+            dirs = dirstack.pop()
+            empty_dir = dirs.pop()
+            try:
+                os.rmdir(empty_dir)
+            except OSError:
+                # we'll still fail at the top level
+                pass
+        if not dirs:
+            # we are done
             break
-    else:
-        i += 1
-    rel_list = [pardir] * (len(start_list)-i) + path_list[i:]
-    if not rel_list:
-        return getattr(os.path, 'curdir', '.')
-    return os.path.join(*rel_list)
+        # otherwise go deeper
+        subdir = dirs[-1]
+        # note: we do not pop here because we need to remember to remove subdir later
+        dirstack.append(dirs)
+        os.chdir(subdir)
 
-relpath = getattr(os.path, 'relpath', _relpath)
+
+def _stripcwd(dev):
+    """Unlink all files in cwd and return list of subdirs"""
+    dirs = []
+    for fn in os.listdir('.'):
+        st = os.lstat(fn)
+        if st.st_dev != dev:
+            # don't cross fs boundary
+            continue
+        if stat.S_ISDIR(st.st_mode):
+            dirs.append(fn)
+        else:
+            try:
+                os.unlink(fn)
+            except OSError:
+                # we'll still fail at the top level
+                pass
+    return dirs
+
+
+def safer_move(src, dst):
+    """Rename if possible, copy+rm otherwise
+
+    Behavior is similar to shutil.move
+
+    Unlike move, src is /always/ moved from src to dst. If dst is an existing
+    directory, then an error is raised.
+    """
+    if os.path.exists(dst):
+        raise koji.GenericError("Destination exists: %s" % dst)
+    elif os.path.islink(dst):
+        raise koji.GenericError("Destination is a symlink: %s" % dst)
+    # TODO - use locking to do a better job of catching races
+    shutil.move(src, dst)
+
+
+def relpath(*args, **kwargs):
+    deprecated("koji.util.relpath() is deprecated and will be removed in a "
+        "future version. See: https://pagure.io/koji/issue/834")
+    return os.path.relpath(*args, **kwargs)
+
 
 def eventFromOpts(session, opts):
     """Determine event id from standard cli options
@@ -357,7 +474,7 @@ def eventFromOpts(session, opts):
         rinfo = session.repoInfo(repo)
         if rinfo:
             return {'id' : rinfo['create_event'],
-                    'ts' : rinfo['create_ts'] }
+                    'ts' : rinfo['create_ts']}
     return None
 
 def filedigestAlgo(hdr):
@@ -409,7 +526,7 @@ def setup_rlimits(opts, logger=None):
         except ValueError:
             logger.error("Invalid resource limit: %s=%s", key, opts[key])
             continue
-        if len(limits) not in (1,2):
+        if len(limits) not in (1, 2):
             logger.error("Invalid resource limit: %s=%s", key, opts[key])
             continue
         if len(limits) == 1:
@@ -417,19 +534,23 @@ def setup_rlimits(opts, logger=None):
         logger.warn('Setting resource limit: %s = %r', key, limits)
         try:
             resource.setrlimit(rcode, tuple(limits))
-        except ValueError, e:
+        except ValueError as e:
             logger.error("Unable to set %s: %s", key, e)
 
 class adler32_constructor(object):
 
     #mimicing the hashlib constructors
     def __init__(self, arg=''):
-        self._value = adler32(arg) & 0xffffffffL
+        if six.PY3 and isinstance(arg, str):
+            arg = bytes(arg, 'utf-8')
+        self._value = adler32(arg) & 0xffffffff
         #the bitwise and works around a bug in some versions of python
-        #see: http://bugs.python.org/issue1202
+        #see: https://bugs.python.org/issue1202
 
     def update(self, arg):
-        self._value = adler32(arg, self._value) & 0xffffffffL
+        if six.PY3 and isinstance(arg, str):
+            arg = bytes(arg, 'utf-8')
+        self._value = adler32(arg, self._value) & 0xffffffff
 
     def digest(self):
         return self._value
@@ -456,14 +577,14 @@ def tsort(parts):
     parts = parts.copy()
     result = []
     while True:
-        level = set([name for name, deps in parts.iteritems() if not deps])
+        level = set([name for name, deps in six.iteritems(parts) if not deps])
         if not level:
             break
         result.append(level)
-        parts = dict([(name, deps - level) for name, deps in parts.iteritems()
+        parts = dict([(name, deps - level) for name, deps in six.iteritems(parts)
                       if name not in level])
     if parts:
-        raise ValueError, 'total ordering not possible'
+        raise ValueError('total ordering not possible')
     return result
 
 class MavenConfigOptAdapter(object):
@@ -487,7 +608,7 @@ class MavenConfigOptAdapter(object):
             elif name in self.MULTILINE:
                 value = value.splitlines()
             return value
-        raise AttributeError, name
+        raise AttributeError(name)
 
 def maven_opts(values, chain=False, scratch=False):
     """
@@ -512,7 +633,7 @@ def maven_opts(values, chain=False, scratch=False):
     for env in getattr(values, 'envs', []):
         fields = env.split('=', 1)
         if len(fields) != 2:
-            raise ValueError, "Environment variables must be in NAME=VALUE format"
+            raise ValueError("Environment variables must be in NAME=VALUE format")
         envs[fields[0]] = fields[1]
     if envs:
         opts['envs'] = envs
@@ -546,14 +667,13 @@ def parse_maven_params(confs, chain=False, scratch=False):
     """
     if not isinstance(confs, (list, tuple)):
         confs = [confs]
-    config = ConfigParser.ConfigParser()
+    config = six.moves.configparser.ConfigParser()
     for conf in confs:
-        conf_fd = file(conf)
+        conf_fd = open(conf)
         config.readfp(conf_fd)
         conf_fd.close()
     builds = {}
     for package in config.sections():
-        params = {}
         buildtype = 'maven'
         if config.has_option(package, 'type'):
             buildtype = config.get(package, 'type')
@@ -562,14 +682,14 @@ def parse_maven_params(confs, chain=False, scratch=False):
         elif buildtype == 'wrapper':
             params = wrapper_params(config, package, chain=chain, scratch=scratch)
             if len(params.get('buildrequires')) != 1:
-                raise ValueError, "A wrapper-rpm must depend on exactly one package"
+                raise ValueError("A wrapper-rpm must depend on exactly one package")
         else:
-            raise ValueError, "Unsupported build type: %s" % buildtype
+            raise ValueError("Unsupported build type: %s" % buildtype)
         if not 'scmurl' in params:
-            raise ValueError, "%s is missing the scmurl parameter" % package
+            raise ValueError("%s is missing the scmurl parameter" % package)
         builds[package] = params
     if not builds:
-        raise ValueError, "No sections found in: %s" % ', '.join(confs)
+        raise ValueError("No sections found in: %s" % ', '.join(confs))
     return builds
 
 def parse_maven_param(confs, chain=False, scratch=False, section=None):
@@ -587,9 +707,9 @@ def parse_maven_param(confs, chain=False, scratch=False, section=None):
         if section in builds:
             builds = {section: builds[section]}
         else:
-            raise ValueError, "Section %s does not exist in: %s" % (section, ', '.join(confs))
+            raise ValueError("Section %s does not exist in: %s" % (section, ', '.join(confs)))
     elif len(builds) > 1:
-        raise ValueError, "Multiple sections in: %s, you must specify the section" % ', '.join(confs)
+        raise ValueError("Multiple sections in: %s, you must specify the section" % ', '.join(confs))
     return builds
 
 def parse_maven_chain(confs, scratch=False):
@@ -605,7 +725,7 @@ def parse_maven_chain(confs, scratch=False):
     for package, params in builds.items():
         depmap[package] = set(params.get('buildrequires', []))
     try:
-        order = tsort(depmap)
-    except ValueError, e:
-        raise ValueError, 'No possible build order, missing/circular dependencies'
+        tsort(depmap)
+    except ValueError:
+        raise ValueError('No possible build order, missing/circular dependencies')
     return builds

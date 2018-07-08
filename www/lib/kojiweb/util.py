@@ -26,12 +26,12 @@ import koji
 from koji.util import md5_constructor
 import os
 import stat
-import time
 #a bunch of exception classes that explainError needs
 from socket import error as socket_error
 from socket import sslerror as socket_sslerror
 from xmlrpclib import ProtocolError
 from xml.parsers.expat import ExpatError
+import cgi
 
 class NoSuchException(Exception):
     pass
@@ -123,16 +123,21 @@ def _genHTML(environ, fileName):
     else:
         environ['koji.values']['currentUser'] = None
     environ['koji.values']['authToken'] = _genToken(environ)
-    if not environ['koji.values'].has_key('mavenEnabled'):
+    if 'mavenEnabled' not in environ['koji.values']:
         if 'koji.session' in environ:
             environ['koji.values']['mavenEnabled'] = environ['koji.session'].mavenEnabled()
         else:
             environ['koji.values']['mavenEnabled'] = False
-    if not environ['koji.values'].has_key('winEnabled'):
+    if 'winEnabled' not in environ['koji.values']:
         if 'koji.session' in environ:
             environ['koji.values']['winEnabled'] = environ['koji.session'].winEnabled()
         else:
             environ['koji.values']['winEnabled'] = False
+    if 'LoginDisabled' not in environ['koji.values']:
+        if 'koji.options' in environ:
+            environ['koji.values']['LoginDisabled'] = environ['koji.options']['LoginDisabled']
+        else:
+            environ['koji.values']['LoginDisabled'] = False
 
     tmpl_class = TEMPLATES.get(fileName)
     if not tmpl_class:
@@ -294,7 +299,7 @@ def paginateMethod(server, values, methodName, args=None, kw=None,
     if not start or start < 0:
         start = 0
     if not dataName:
-        raise StandardError, 'dataName must be specified'
+        raise Exception('dataName must be specified')
 
     kw['queryOpts'] = {'countOnly': True}
     totalRows = getattr(server, methodName)(*args, **kw)
@@ -324,14 +329,13 @@ def paginateResults(server, values, methodName, args=None, kw=None,
     if not start or start < 0:
         start = 0
     if not dataName:
-        raise StandardError, 'dataName must be specified'
-
-    totalRows = server.count(methodName, *args, **kw)
+        raise Exception('dataName must be specified')
 
     kw['filterOpts'] = {'order': order,
                         'offset': start,
                         'limit': pageSize}
-    data = server.filterResults(methodName, *args, **kw)
+
+    totalRows, data = server.countAndFilterResults(methodName, *args, **kw)
     count = len(data)
 
     _populateValues(values, dataName, prefix, data, totalRows, start, count, pageSize, order)
@@ -375,7 +379,17 @@ def stateImage(stateID):
 
 def brStateName(stateID):
     """Convert a numeric buildroot state into a readable name."""
+    if stateID is None:
+        return '-'
     return koji.BR_STATES[stateID].lower()
+
+
+def brLabel(brinfo):
+    if brinfo['br_type'] == koji.BR_TYPES['STANDARD']:
+        return '%(tag_name)s-%(id)i-%(repo_id)i' % brinfo
+    else:
+        return '%(cg_name)s:%(id)i' % brinfo
+
 
 def repoStateName(stateID):
     """Convert a numeric repository state into a readable name."""
@@ -445,6 +459,11 @@ def formatMode(mode):
             else:
                 result += '-'
 
+    if mode & stat.S_ISUID:
+        result = result[:3] + 's' + result[4:]
+    if mode & stat.S_ISGID:
+        result = result[:6] + 's' + result[7:]
+
     return result
 
 def rowToggle(template):
@@ -464,8 +483,12 @@ def taskScratchClass(task_object):
     """ Return a css class indicating whether or not this task is a scratch
     build.
     """
+    method = task_object['method']
     request = task_object['request']
-    if len(request) >= 3:
+    if method == 'build' and len(request) >= 3:
+        # Each task method has its own signature for what gets put in the
+        # request list.  Builds should have an `opts` dict at index 2.
+        # See www/kojiweb/taskinfo.chtml for the grimoire.
         opts = request[2]
         if opts.get('scratch'):
             return "scratch"
@@ -581,3 +604,253 @@ a network issue or load issues on the server."""
     else:
         str = "An error has occurred while processing your request."
     return str, level
+
+
+class TaskResultFragment(object):
+    """Represent an HTML fragment composed from texts and tags.
+ 
+    This class permits us to compose HTML fragment by the default
+    composer method or self-defined composer function.
+
+    Public attributes:
+        - text
+        - size
+        - need_escape
+        - begin_tag
+        - eng_tag
+        - composer
+        - empty_str_placeholder
+    """
+    def __init__(self, text='', size=None, need_escape=None, begin_tag='',
+                     end_tag='', composer=None, empty_str_placeholder=None):
+        self.text = text
+        if size is None:
+            self.size = len(text)
+        else:
+            self.size = size
+        self.need_escape = need_escape
+        self.begin_tag = begin_tag
+        self.end_tag = end_tag
+        if composer is None:
+            self.composer = self.default_composer
+        else:
+            self.composer = lambda length=None: composer(self, length)
+        if empty_str_placeholder is None:
+            self.empty_str_placeholder = '...'
+        else:
+            self.empty_str_placeholder = empty_str_placeholder
+
+    def default_composer(self, length=None):
+        import cgi
+        if length is None:
+            text = self.text
+        else:
+            text = self.text[:length]
+        if self.need_escape:
+            text = cgi.escape(text)
+        if self.size > 0 and text == '':
+            text = self.empty_str_placeholder
+        return '%s%s%s' % (self.begin_tag, text, self.end_tag)
+
+
+class TaskResultLine(object):
+    """Represent an HTML line fragment.
+
+    This class permits us from several TaskResultFragment instances
+    to compose an HTML fragment that ends with a line break. You
+    can use the default composer method or give a self-defined version.
+
+    Public attributes:
+        - fragments
+        - need_escape
+        - begin_tag
+        - end_tag
+        - composer
+    """
+    def __init__(self, fragments=None, need_escape=None, begin_tag='',
+                     end_tag='<br />', composer=None):
+        if fragments is None:
+            self.fragments = []
+        else:
+            self.fragments = fragments
+
+        self.need_escape = need_escape
+        self.begin_tag = begin_tag
+        self.end_tag = end_tag
+        if composer is None:
+            self.composer = self.default_composer
+        else:
+
+            def composer_wrapper(length=None, postscript=None):
+                return composer(self, length, postscript)
+
+            self.composer = composer_wrapper
+        self.size=self._size()
+
+    def default_composer(self, length=None, postscript=None):
+        import cgi
+        line_text = ''
+        size = 0
+        if postscript is None:
+            postscript = ''
+
+        for fragment in self.fragments:
+            if length is None:
+                line_text += fragment.composer()
+            else:
+                if size >= length: break
+                remainder_size = length - size
+                line_text += fragment.composer(remainder_size)
+                size += fragment.size
+
+        if self.need_escape:
+            line_text = cgi.escape(line_text)
+
+        return '%s%s%s%s' % (self.begin_tag, line_text, postscript, self.end_tag)
+
+    def _size(self):
+        return sum([fragment.size for fragment in self.fragments])
+
+
+def _parse_value(key, value, sep=', '):
+    _str = None
+    begin_tag = ''
+    end_tag = ''
+    need_escape = True
+    if key in ('brootid', 'buildroot_id'):
+        _str = str(value)
+        begin_tag = '<a href="buildrootinfo?buildrootID=%s">' % _str
+        end_tag = '</a>'
+        need_escape = False
+    elif isinstance(value, list):
+        _str = sep.join([str(val) for val in value])
+    elif isinstance(value, dict):
+        _str = sep.join(['%s=%s' % ((n == '' and "''" or n), v)
+                             for n, v in value.items()])
+    else:
+        _str = str(value)
+    if _str is None:
+        _str = ''
+
+    return TaskResultFragment(text=_str, need_escape=need_escape,
+                                  begin_tag=begin_tag, end_tag=end_tag)
+
+def task_result_to_html(result=None, exc_class=None,
+                            max_abbr_lines=None, max_abbr_len=None,
+                            abbr_postscript=None):
+    """convert the result to a mutiple lines HTML fragment
+
+    Args:
+        result: task result. Default is empty string.
+        exc_class: Exception raised when access the task result.
+        max_abbr_lines: maximum abbreviated result lines. Default is 11.
+        max_abbr_len: maximum abbreviated result length. Default is 512.
+
+    Returns:
+        Tuple of full result and abbreviated result.
+    """
+    default_max_abbr_result_lines = 5
+    default_max_abbr_result_len = 400
+
+    if max_abbr_lines is None:
+        max_abbr_lines = default_max_abbr_result_lines
+    if max_abbr_len is None:
+        max_abbr_len = default_max_abbr_result_len
+
+    postscript_fragment = TaskResultFragment(
+        text='...', end_tag='</a>',
+        begin_tag='<a href="#" collapse" %s %s>' % (
+            'id="toggle-full-result"',
+            'style="display: none;text-decoration:none;"'))
+
+    if abbr_postscript is None:
+        abbr_postscript = postscript_fragment.composer()
+    elif isinstance(abbr_postscript, TaskResultFragment):
+        abbr_postscript = abbr_postscript.composer()
+    elif isinstance(abbr_postscript, str):
+        abbr_postscript = abbr_postscript
+    else:
+        abbr_postscript = '...'
+
+    if not abbr_postscript.startswith(' '):
+        abbr_postscript = ' %s' % abbr_postscript
+
+    full_ret_str = ''
+    abbr_ret_str = ''
+    lines = []
+
+    def _parse_properties(props):
+        return ', '.join([v is not None and '%s=%s' % (n, v) or str(n)
+                              for n, v in props.items()])
+
+    if exc_class:
+        if hasattr(result, 'faultString'):
+            _str = result.faultString.strip()
+        else:
+            _str = "%s: %s" % (exc_class.__name__, str(result))
+        fragment = TaskResultFragment(text=_str, need_escape=True)
+        line = TaskResultLine(fragments=[fragment],
+                                  begin_tag='<pre>', end_tag='</pre>')
+        lines.append(line)
+    elif isinstance(result, dict):
+
+        def composer(line, length=None, postscript=None):
+            if postscript is None:
+                postscript = ''
+            key_fragment = line.fragments[0]
+            val_fragment = line.fragments[1]
+            if length is None:
+                return '%s%s = %s%s%s' % (line.begin_tag, key_fragment.composer(),
+                                            val_fragment.composer(), postscript,
+                                            line.end_tag)
+            first_part_len = len('%s = ') + key_fragment.size
+            remainder_len = length - first_part_len
+            if remainder_len < 0: remainder_len = 0
+
+            return '%s%s = %s%s%s' % (
+                line.begin_tag, key_fragment.composer(),
+                val_fragment.composer(remainder_len), postscript, line.end_tag)
+
+        for k, v in result.items():
+            if k == 'properties':
+                _str = "properties = %s" % _parse_properties(v)
+                fragment = TaskResultFragment(text=_str)
+                line = TaskResultLine(fragments=[fragment], need_escape=True)
+            elif k != '__starstar':
+                val_fragment = _parse_value(k, v)
+                key_fragment = TaskResultFragment(text=k, need_escape=True)
+                line = TaskResultLine(fragments=[key_fragment, val_fragment],
+                                          need_escape=False, composer=composer)
+            lines.append(line)
+    else:
+        if result is not None:
+            fragment = _parse_value('', result)
+            line = TaskResultLine(fragments=[fragment])
+            lines.append(line)
+
+    if not lines:
+        return full_ret_str, abbr_ret_str
+
+    total_lines = len(lines)
+    full_result_len = sum([line.size for line in lines])
+    total_abbr_lines = 0
+    total_abbr_len = 0
+
+    for line in lines:
+        line_len = line.size
+        full_ret_str += line.composer()
+
+        if total_lines < max_abbr_lines and full_result_len < max_abbr_len:
+            continue
+        if total_abbr_lines >= max_abbr_lines or total_abbr_len >= max_abbr_len:
+            continue
+
+        if total_abbr_len + line_len >= max_abbr_len:
+            remainder_abbr_len = max_abbr_len - total_abbr_len
+            abbr_ret_str += line.composer(remainder_abbr_len, postscript=abbr_postscript)
+        else:
+            abbr_ret_str += line.composer()
+        total_abbr_lines += 1
+        total_abbr_len += line_len
+
+    return full_ret_str, abbr_ret_str

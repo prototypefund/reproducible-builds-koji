@@ -37,7 +37,7 @@ class ThreadLocal(object):
     def __getattr__(self, key):
         id = thread.get_ident()
         tdict = object.__getattribute__(self, '_tdict')
-        if not tdict.has_key(id):
+        if id not in tdict:
             raise AttributeError(key)
         data = tdict[id]
         return object.__getattribute__(data, key)
@@ -45,15 +45,15 @@ class ThreadLocal(object):
     def __setattr__(self, key, value):
         id = thread.get_ident()
         tdict = object.__getattribute__(self, '_tdict')
-        if not tdict.has_key(id):
+        if id not in tdict:
             tdict[id] = _data()
         data = tdict[id]
-        return object.__setattr__(data,key,value)
+        return object.__setattr__(data, key, value)
 
     def __delattr__(self, key):
         id = thread.get_ident()
         tdict = object.__getattribute__(self, '_tdict')
-        if not tdict.has_key(id):
+        if id not in tdict:
             raise AttributeError(key)
         data = tdict[id]
         ret = object.__delattr__(data, key)
@@ -65,13 +65,13 @@ class ThreadLocal(object):
         id = thread.get_ident()
         tdict = object.__getattribute__(self, '_tdict')
         return "(current thread: %s) {" % id  + \
-            ", ".join([ "%s : %s" %(k,v.__dict__) for (k,v) in tdict.iteritems() ]) + \
+            ", ".join(["%s : %s" %(k, v.__dict__) for (k, v) in tdict.iteritems()]) + \
             "}"
 
     def _threadclear(self):
         id = thread.get_ident()
         tdict = object.__getattribute__(self, '_tdict')
-        if not tdict.has_key(id):
+        if id not in tdict:
             return
         del tdict[id]
 
@@ -85,28 +85,28 @@ if __name__ == '__main__':
 
     #context.foo = 1
     #context.bar = 2
-    print context
+    print(context)
     #del context.bar
-    print context
+    print(context)
 
     import random
     import time
     def test():
-        context.foo=random.random()
+        context.foo = random.random()
         time.sleep(1.5+random.random())
         context._threadclear()
-        print context
+        print(context)
 
-    for x in xrange(1,10):
-        thread.start_new_thread(test,())
+    for x in xrange(1, 10):
+        thread.start_new_thread(test, ())
 
     time.sleep(4)
-    print
-    print context
+    print('')
+    print(context)
 
     context.foo = 1
     context.bar = 2
-    print context.foo,context.bar
-    print context
+    print(context.foo, context.bar)
+    print(context)
     context._threadclear()
-    print context
+    print(context)

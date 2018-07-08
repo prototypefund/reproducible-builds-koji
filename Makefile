@@ -1,6 +1,6 @@
 NAME=koji
 SPECFILE = $(firstword $(wildcard *.spec))
-SUBDIRS = hub builder koji cli docs util www plugins vm
+SUBDIRS = hub builder koji cli util www plugins vm
 
 ifdef DIST
 DIST_DEFINES := --define "dist $(DIST)"
@@ -59,12 +59,28 @@ clean:
 	rm -f *.o *.so *.pyc *~ koji*.bz2 koji*.src.rpm
 	rm -rf koji-$(VERSION)
 	for d in $(SUBDIRS); do make -s -C $$d clean; done
+	coverage erase ||:
 
 git-clean:
 	@git clean -d -q -x
 
-subdirs:
-	for d in $(SUBDIRS); do make -C $$d; [ $$? = 0 ] || exit 1; done
+test:
+	coverage erase
+	PYTHONPATH=hub/.:plugins/hub/.:plugins/builder/.:plugins/cli/.:cli/.:www/lib coverage run \
+	    --source . /usr/bin/nosetests
+	coverage report
+	coverage html
+	@echo Full coverage report in htmlcov/index.html
+
+test3:
+	coverage erase
+	PYTHONPATH=hub/.:plugins/hub/.:plugins/builder/.:plugins/cli/.:cli/. coverage3 run \
+	    --rcfile .coveragerc3 --source . \
+	    /usr/bin/nosetests-3 \
+	    tests/test_lib tests/test_cli
+	coverage report --rcfile .coveragerc3
+	coverage html --rcfile .coveragerc3
+	@echo Full coverage report at file://${PWD}/htmlcov/index.html
 
 test-tarball:
 	@rm -rf .koji-$(VERSION)
@@ -88,6 +104,23 @@ rpm: tarball
 
 test-rpm: tarball
 	$(RPM_WITH_DIRS) $(DIST_DEFINES) --define "testbuild 1" -bb $(SPECFILE)
+
+pypi:
+	rm -rf dist
+	python setup.py sdist
+	# py2
+	virtualenv build_py2
+	build_py2/bin/pip install --upgrade pip setuptools wheel virtualenv
+	build_py2/bin/python setup.py bdist_wheel
+	rm -rf build_py2
+	# py3
+	python3 -m venv build_py3
+	build_py3/bin/pip install --upgrade pip setuptools wheel virtualenv
+	build_py3/bin/python setup.py bdist_wheel
+	rm -rf build_py3
+
+pypi-upload:
+	twine upload dist/*
 
 tag::
 	git tag -a $(TAG)
