@@ -3,3 +3,4 @@
 /usr/bin/koji
 /usr/lib/python2.7/site-packages/koji_cli_plugins/
 /usr/lib/python2.7/site-packages/koji_cli/
+debian/fedora.conf /etc/koji.conf.d/
