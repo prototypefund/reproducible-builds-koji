@@ -62,7 +62,7 @@ class TestListHosts(unittest.TestCase):
         query = self.queries[0]
         self.assertEqual(query.tables, ['host'])
         self.assertEqual(query.joins, [])
-        self.assertEqual(query.clauses, [r"""(arches ~ E'\\mx86_64\\M')"""])
+        self.assertEqual(query.clauses, [r"""arches ~ %(archPattern)s"""])
 
     def test_list_hosts_multi_arch(self):
         self.exports.listHosts(arches=['x86_64', 's390'])
@@ -71,7 +71,7 @@ class TestListHosts(unittest.TestCase):
         query = self.queries[0]
         self.assertEqual(query.tables, ['host'])
         self.assertEqual(query.joins, [])
-        self.assertEqual(query.clauses, [r"""(arches ~ E'\\mx86_64\\M' OR arches ~ E'\\ms390\\M')"""])
+        self.assertEqual(query.clauses, [r"""arches ~ %(archPattern)s"""])
 
     def test_list_hosts_bad_arch(self):
         with self.assertRaises(koji.GenericError):
