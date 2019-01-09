@@ -1,18 +1,19 @@
-koji (1.16.0-3) UNRELEASED; urgency=medium
+koji (1.16.0-3) unstable; urgency=medium
 
   * koji-client: add depends on python-requests and python-dateutil, thanks
     to Juhani Numminen for the bug report. Closes: #918780
-  * Bump debhelper compat to 11 so we get nice koji* service handling in
-    postinst and postrm.
-  * Use the new debhelper-compat(=11) notation and drop d/compat.
-  * Add myself to uploaders.
-  * Bump standards version to 4.3.0, no changes needed.
-  * Add "Rules-Requires-Root: no" to support building as non-root.
+  * d/control:
+    - bump debhelper compat to 11 so we get nice koji* service handling in
+      postinst and postrm.
+    - use the new debhelper-compat(=11) notation and drop d/compat.
+    - bump standards version to 4.3.0, no changes needed.
+    - add "Rules-Requires-Root: no" to support building as non-root.
+    - add myself to uploaders.
   * d/copyright:
     - use https for Format: URL.
     - add myself.
 
- -- Holger Levsen <holger@debian.org>  Wed, 09 Jan 2019 11:29:51 +0100
+ -- Holger Levsen <holger@debian.org>  Wed, 09 Jan 2019 12:11:40 +0100
 
 koji (1.16.0-2) unstable; urgency=medium
 
