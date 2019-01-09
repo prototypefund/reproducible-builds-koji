@@ -8,7 +8,9 @@ koji (1.16.0-3) UNRELEASED; urgency=medium
   * Add myself to uploaders.
   * Bump standards version to 4.3.0, no changes needed.
   * Add "Rules-Requires-Root: no" to support building as non-root.
-  * d/copyright: use https for Format: URL.
+  * d/copyright:
+    - use https for Format: URL.
+    - add myself.
 
  -- Holger Levsen <holger@debian.org>  Wed, 09 Jan 2019 11:29:51 +0100
 
