@@ -7,6 +7,7 @@ koji (1.16.0-3) UNRELEASED; urgency=medium
   * Use the new debhelper-compat(=11) notation and drop d/compat.
   * Add myself to uploaders.
   * Bump standards version to 4.3.0, no changes needed.
+  * Add "Rules-Requires-Root: no" to support building as non-root.
 
  -- Holger Levsen <holger@debian.org>  Wed, 09 Jan 2019 11:29:51 +0100
 
