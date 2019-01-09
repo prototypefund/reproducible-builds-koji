@@ -64,6 +64,8 @@ Description: RPM-based build system - common library
 Package: koji-client
 Architecture: all
 Depends: python, ${misc:Depends}, ${python:Depends}, koji-common (= ${binary:Version}),
+ python-requests,
+ python-dateutil,
  yum,
 Description: RPM-based build system - client
  The Fedora Project uses Koji for their build system, as do several other

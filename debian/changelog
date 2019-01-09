@@ -1,3 +1,11 @@
+koji (1.16.0-3) UNRELEASED; urgency=medium
+
+  * Team upload.
+  * koji-client: add depends on python-requests and python-dateutil, thanks
+    to Juhani Numminen for the bug report. Closes: #918780
+
+ -- Holger Levsen <holger@debian.org>  Wed, 09 Jan 2019 11:29:51 +0100
+
 koji (1.16.0-2) unstable; urgency=medium
 
   * Install a conf file for fedora's current main koji hub.
