@@ -1,8 +1,8 @@
-koji (1.16.1-1) UNRELEASED; urgency=medium
+koji (1.16.1-1) unstable; urgency=medium
 
   * New upstream version.
 
- -- Holger Levsen <holger@debian.org>  Thu, 07 Feb 2019 14:10:32 +0100
+ -- Holger Levsen <holger@debian.org>  Thu, 07 Feb 2019 14:22:11 +0100
 
 koji (1.16.0-3) unstable; urgency=medium
 
