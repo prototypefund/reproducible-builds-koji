@@ -1,0 +1,35 @@
+koji (1.16.0-3) unstable; urgency=medium
+
+  * koji-client: add depends on python-requests and python-dateutil, thanks
+    to Juhani Numminen for the bug report. Closes: #918780
+  * d/control:
+    - bump debhelper compat to 11 so we get nice koji* service handling in
+      postinst and postrm.
+    - use the new debhelper-compat(=11) notation and drop d/compat.
+    - bump standards version to 4.3.0, no changes needed.
+    - add "Rules-Requires-Root: no" to support building as non-root.
+    - add myself to uploaders.
+  * d/copyright:
+    - use https for Format: URL.
+    - add myself.
+
+ -- Holger Levsen <holger@debian.org>  Wed, 09 Jan 2019 12:11:40 +0100
+
+koji (1.16.0-2) unstable; urgency=medium
+
+  * Install a conf file for fedora's current main koji hub.
+
+ -- Ximin Luo <infinity0@debian.org>  Sun, 08 Jul 2018 12:37:16 -0700
+
+koji (1.16.0-1) unstable; urgency=medium
+
+  * New upstream release. (Closes: #877921, #877886, #877887)
+
+ -- Ximin Luo <infinity0@debian.org>  Sun, 08 Jul 2018 12:06:37 -0700
+
+koji (1.10.0-1) unstable; urgency=medium
+
+  [ Marek Marczykowski-Górecki ]
+  * Initial release. (Closes: #806953)
+
+ -- Ximin Luo <infinity0@debian.org>  Fri, 04 Dec 2015 11:20:57 +0100

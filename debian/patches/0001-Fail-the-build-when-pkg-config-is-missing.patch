@@ -1,0 +1,73 @@
+Description: Fail the build when pkg-config is missing or fails
+ This prevents systemd service files being accidentally installed to /
+Author: Marek Marczykowski-Górecki <marmarek@invisiblethingslab.com>
+Forwarded: no
+---
+This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,7 @@
+ NAME=koji
+ SPECFILE = $(firstword $(wildcard *.spec))
+ SUBDIRS = hub builder koji cli util www plugins vm
++SYSTEMDSYSTEMUNITDIR = $(shell pkg-config systemd --variable=systemdsystemunitdir)
+ 
+ ifdef DIST
+ DIST_DEFINES := --define "dist $(DIST)"
+@@ -149,4 +150,5 @@
+ 	mkdir -p $(DESTDIR)
+ 
+ 	for d in $(SUBDIRS); do make DESTDIR=`cd $(DESTDIR); pwd` \
+-		-C $$d install TYPE=$(TYPE); [ $$? = 0 ] || exit 1; done
++		-C $$d install SYSTEMDSYSTEMUNITDIR=$(SYSTEMDSYSTEMUNITDIR) \
++		TYPE=$(TYPE); [ $$? = 0 ] || exit 1; done
+--- a/builder/Makefile
++++ b/builder/Makefile
+@@ -1,6 +1,5 @@
+ BINFILES = kojid
+ LIBEXECFILES = mergerepos
+-SYSTEMDSYSTEMUNITDIR = $(shell pkg-config systemd --variable=systemdsystemunitdir)
+ TYPE = systemd
+ 
+ _default:
+@@ -29,6 +28,7 @@
+ 	install -p -m 644 kojid.conf $(DESTDIR)/etc/kojid/kojid.conf
+ 
+ install-systemd: _install
++	test -n $(SYSTEMDSYSTEMUNITDIR)
+ 	mkdir -p $(DESTDIR)$(SYSTEMDSYSTEMUNITDIR)
+ 	install -p -m 644 kojid.service $(DESTDIR)$(SYSTEMDSYSTEMUNITDIR)
+ 
+--- a/util/Makefile
++++ b/util/Makefile
+@@ -1,5 +1,4 @@
+ BINFILES = kojira koji-gc koji-shadow
+-SYSTEMDSYSTEMUNITDIR = $(shell pkg-config systemd --variable=systemdsystemunitdir)
+ TYPE = systemd
+ 
+ _default:
+@@ -27,6 +26,7 @@
+ 	install -p -m 644 koji-shadow.conf $(DESTDIR)/etc/koji-shadow/koji-shadow.conf
+ 
+ install-systemd: _install
++	test -n $(SYSTEMDSYSTEMUNITDIR)
+ 	mkdir -p $(DESTDIR)$(SYSTEMDSYSTEMUNITDIR)
+ 	install -p -m 644 kojira.service $(DESTDIR)$(SYSTEMDSYSTEMUNITDIR)
+ 
+--- a/vm/Makefile
++++ b/vm/Makefile
+@@ -1,6 +1,5 @@
+ BINFILES = kojivmd
+ SHAREFILES = kojikamid
+-SYSTEMDSYSTEMUNITDIR = $(shell pkg-config systemd --variable=systemdsystemunitdir)
+ TYPE = systemd
+ 
+ _default:
+@@ -29,6 +28,7 @@
+ 	install -p -m 644 kojivmd.conf $(DESTDIR)/etc/kojivmd/kojivmd.conf
+ 
+ install-systemd: _install
++	test -n $(SYSTEMDSYSTEMUNITDIR)
+ 	mkdir -p $(DESTDIR)$(SYSTEMDSYSTEMUNITDIR)
+ 	install -p -m 644 kojivmd.service $(DESTDIR)$(SYSTEMDSYSTEMUNITDIR)
+ 
