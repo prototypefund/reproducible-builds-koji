@@ -1,8 +1,9 @@
 from __future__ import absolute_import
 from __future__ import division
+
 import ast
 import base64
-import dateutil.parser
+from collections import OrderedDict
 import fnmatch
 import json
 import logging
@@ -11,12 +12,13 @@ import os
 import pprint
 import random
 import re
-import six
 import stat
 import sys
 import time
 import traceback
 
+import dateutil.parser
+import six
 import six.moves.xmlrpc_client
 from six.moves import filter
 from six.moves import map
@@ -3024,9 +3026,10 @@ def anon_handle_rpminfo(goptions, session, args):
             print("Built: %s" % time.strftime('%a, %d %b %Y %H:%M:%S %Z', time.localtime(info['buildtime'])))
         print("SIGMD5: %(payloadhash)s" % info)
         print("Size: %(size)s" % info)
-        headers = session.getRPMHeaders(rpmID=info['id'], headers=["license"])
-        print("License: %(license)s" % headers)
         if not info.get('external_repo_id', 0):
+            headers = session.getRPMHeaders(rpmID=info['id'],
+                                            headers=["license"])
+            print("License: %(license)s" % headers)
             print("Build ID: %(build_id)s" % info)
         if info['buildroot_id'] is None:
             print("No buildroot data available")
@@ -3302,9 +3305,10 @@ def handle_clone_tag(goptions, session, args):
                 session.multiCall()
         if options.builds:
             # get --all latest builds from src tag
-            builds = session.listTagged(srctag['id'], event=event.get('id'),
-                                        inherit=options.inherit_builds,
-                                        latest=options.latest_only)
+            builds = reversed(session.listTagged(srctag['id'],
+                                                 event=event.get('id'),
+                                                 inherit=options.inherit_builds,
+                                                 latest=options.latest_only))
             if not options.test:
                 session.multicall = True
             for build in builds:
@@ -3337,7 +3341,7 @@ def handle_clone_tag(goptions, session, args):
         # get fresh list of packages & builds into maps.
         srcpkgs = {}
         dstpkgs = {}
-        srclblds = {}
+        srclblds = OrderedDict()
         dstlblds = {}
         srcgroups = {}
         dstgroups = {}
@@ -3347,10 +3351,10 @@ def handle_clone_tag(goptions, session, args):
             for pkg in session.listPackages(tagID=dsttag['id'], inherited=True):
                 dstpkgs[pkg['package_name']] = pkg
         if options.builds:
-            src_builds = session.listTagged(srctag['id'],
-                                            event=event.get('id'),
-                                            inherit=options.inherit_builds,
-                                            latest=options.latest_only)
+            src_builds = list(reversed(session.listTagged(srctag['id'],
+                                                          event=event.get('id'),
+                                                          inherit=options.inherit_builds,
+                                                          latest=options.latest_only)))
             for build in src_builds:
                 srclblds[build['nvr']] = build
             for build in session.getLatestBuilds(dsttag['name']):
@@ -3376,7 +3380,7 @@ def handle_clone_tag(goptions, session, args):
             if nvr not in dstlblds:
                 baddlist.append(lbld)
         baddlist.sort(key = lambda x: x['package_name'])
-        bdellist = [] # list containing new builds to be removed from src tag
+        bdellist = [] # list containing new builds to be removed from dst tag
         for (nvr, lbld) in six.iteritems(dstlblds):
             if nvr not in srclblds:
                 bdellist.append(lbld)
@@ -3474,33 +3478,42 @@ def handle_clone_tag(goptions, session, args):
         if not options.test:
             session.multiCall()
         # DEL packages.
+        ninhrtpdellist = []
+        inhrtpdellist = []
+        for pkg in pdellist:
+            if pkg['tag_name'] == dsttag['name']:
+                ninhrtpdellist.append(pkg)
+            else:
+                inhrtpdellist.append(pkg)
+        session.multicall = True
+        # delete only non-inherited packages.
+        for pkg in ninhrtpdellist:
+            # check if package have owned builds inside.
+            session.listTagged(dsttag['name'], package=pkg['package_name'], inherit=False)
+        bump_builds = session.multiCall()
         if not options.test:
             session.multicall = True
-        for pkg in pdellist:
-            # delete only non-inherited packages.
-            if build['tag_name'] == dsttag['name']:
-                # check if package have owned builds inside.
-                builds = session.listTagged(dsttag['name'], package=pkg['package_name'], inherit=False)
-                #remove all its builds first if there are any.
-                for build in builds:
-                    build['name'] = build['package_name'] #add missing 'name' field.
-                    chgbldlist.append(('[del]', build['package_name'], build['nvr'],
-                                        koji.BUILD_STATES[build['state']],
-                                        build['owner_name'], build['tag_name']))
-                    # so delete latest build(s) from new tag.
-                    if not options.test:
-                        session.untagBuildBypass(dsttag['name'], build, force=options.force)
-                # now safe to remove package itselfm since we resolved its builds.
-                chgpkglist.append(('[del]', pkg['package_name'], pkg['blocked'],
-                                    pkg['owner_name'], pkg['tag_name']))
+        for pkg, [builds] in zip(ninhrtpdellist, bump_builds):
+            #remove all its builds first if there are any.
+            for build in builds:
+                build['name'] = build['package_name'] #add missing 'name' field.
+                chgbldlist.append(('[del]', build['package_name'], build['nvr'],
+                                    koji.BUILD_STATES[build['state']],
+                                    build['owner_name'], build['tag_name']))
+                # so delete latest build(s) from new tag.
                 if not options.test:
-                    session.packageListRemove(dsttag['name'], pkg['package_name'], force=False)
-            # mark as blocked inherited packages.
-            if build['tag_name'] != dsttag['name']:
-                chgpkglist.append(('[blk]', pkg['package_name'], pkg['blocked'],
-                                    pkg['owner_name'], pkg['tag_name']))
-                if not options.test:
-                    session.packageListBlock(dsttag['name'], pkg['package_name'])
+                    session.untagBuildBypass(dsttag['name'], build, force=options.force)
+            # now safe to remove package itselfm since we resolved its builds.
+            chgpkglist.append(('[del]', pkg['package_name'], pkg['blocked'],
+                                pkg['owner_name'], pkg['tag_name']))
+            if not options.test:
+                session.packageListRemove(dsttag['name'], pkg['package_name'], force=False)
+        # mark as blocked inherited packages.
+        for pkg in inhrtpdellist:
+            chgpkglist.append(('[blk]', pkg['package_name'], pkg['blocked'],
+                                pkg['owner_name'], pkg['tag_name']))
+            if not options.test:
+                session.packageListBlock(dsttag['name'], pkg['package_name'])
         if not options.test:
             session.multiCall()
         # DEL groups.
@@ -7003,6 +7016,8 @@ def handle_dist_repo(options, session, args):
         task_opts.arch.remove('noarch')
     if task_opts.with_src and 'src' not in task_opts.arch:
         task_opts.arch.append('src')
+    if not task_opts.arch:
+        parser.error(_('No arches left.'))
     opts = {
         'arch': task_opts.arch,
         'comps': task_opts.comps,

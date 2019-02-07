@@ -439,8 +439,8 @@ def decode_args(*args):
     if len(args) > 0:
         last = args[-1]
         if isinstance(last, dict) and last.get('__starstar', False):
-            del last['__starstar']
-            opts = last
+            opts = last.copy()
+            del opts['__starstar']
             args = args[:-1]
     return args, opts
 
@@ -1443,6 +1443,7 @@ def genMockConfig(name, arch, managed=False, repoid=None, tag_name=None, **opts)
         # Use the group data rather than a generated rpm
         'chroot_setup_cmd': 'groupinstall %s' % opts.get('install_group', 'build'),
         # don't encourage network access from the chroot
+        'rpmbuild_networking': opts.get('use_host_resolv', False),
         'use_host_resolv': opts.get('use_host_resolv', False),
         # Don't let a build last more than 24 hours
         'rpmbuild_timeout': opts.get('rpmbuild_timeout', 86400)

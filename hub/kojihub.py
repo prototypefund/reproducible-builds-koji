@@ -54,6 +54,7 @@ import koji.db
 import koji.plugin
 import koji.policy
 import koji.xmlrpcplus
+import koji.tasks
 from koji.context import context
 from koji.util import dslice
 from koji.util import md5_constructor
@@ -514,18 +515,47 @@ def make_task(method, arglist, **opts):
     if 'channel' in opts:
         policy_data['req_channel'] = opts['channel']
         req_channel_id = get_channel_id(opts['channel'], strict=True)
-    if method == 'build':
-        # arglist = source, target, [opts]
-        args = koji.decode_args2(arglist, ('source', 'target', 'opts'))
-        policy_data['source'] = args['source']
-        if args['target'] is None:
-            #koji-shadow makes null-target builds
-            policy_data['target'] = None
-        else:
-            target = get_build_target(args['target'], strict=True)
-            policy_data['target'] = target['name']
-        t_opts = args.get('opts', {})
+    params = {}
+    try:
+        params = koji.tasks.parse_task_params(method, arglist)
+    except TypeError:
+        logger.warning("%s is not a standard koji task", method)
+    except koji.ParameterError:
+        logger.warning("Cannot parse parameters: %s of %s task", arglist, method)
+    except Exception:
+        logger.warning("Unexcepted error occurs when parsing parameters: %s of %s task",
+                       arglist, method, exc_info=True)
+    if params:
+        # parameters that indicate source for build
+        for k in ('src', 'spec_url', 'url'):
+            if method == 'newRepo':
+                # newRepo has a 'src' parameter that means something else
+                break
+            if k in params:
+                policy_data['source'] = params.get(k)
+                break
+        # parameters that indicate build target
+        target = None
+        hastarget = False
+        for k in ('target', 'build_target', 'target_info'):
+            if k in params:
+                target = params.get(k)
+                hastarget = True
+                break
+        if hastarget:
+            if isinstance(target, dict):
+                if 'name' not in target:
+                    logger.warning("Bad build target parameter: %r", target)
+                    target = None
+                else:
+                    target = target.get('name')
+            if target is None:
+                policy_data['target'] = None
+            else:
+                policy_data['target'] = get_build_target(target, strict=True)['name']
+        t_opts = params.get('opts', {})
         policy_data['scratch'] = t_opts.get('scratch', False)
+
     ruleset = context.policy.get('channel')
     result = ruleset.apply(policy_data)
     if result is None:
@@ -4884,6 +4914,43 @@ def _set_build_volume(binfo, volinfo, strict=True):
     koji.plugin.run_callbacks('postBuildStateChange', attribute='volume_id', old=old_binfo['volume_id'], new=volinfo['id'], info=binfo)
 
 
+def ensure_volume_symlink(binfo):
+    """Ensure that a build has a symlink on the default volume if needed"""
+
+    # basic checks
+    volname = binfo.get('volume_name')
+    if volname is None:
+        logger.warn('buildinfo has no volume data, cannot create symlink')
+        return
+    if volname == 'DEFAULT':
+        # nothing to do
+        return
+
+    # get the actual build dir
+    build_dir = koji.pathinfo.build(binfo)
+
+    # get the default volume location for the symlink
+    base_vol = lookup_name('volume', 'DEFAULT', strict=True)
+    base_binfo = binfo.copy()
+    base_binfo['volume_id'] = base_vol['id']
+    base_binfo['volume_name'] = base_vol['name']
+    basedir = koji.pathinfo.build(base_binfo)
+
+    # check/make the symlink
+    relpath = os.path.relpath(build_dir, os.path.dirname(basedir))
+    if os.path.islink(basedir):
+        if os.readlink(basedir) == relpath:
+            # already correct
+            return
+        os.unlink(basedir)
+    elif os.path.exists(basedir):
+        raise koji.GenericError('Unexpected build content: %s', basedir)
+    else:
+        # parent dir might not exist
+        koji.ensuredir(os.path.dirname(basedir))
+    os.symlink(relpath, basedir)
+
+
 def check_volume_policy(data, strict=False, default=None):
     """Check volume policy for the given data
 
@@ -5194,6 +5261,9 @@ def import_build(srpm, rpms, brmap=None, task_id=None, build_id=None, logs=None)
             for relpath in files:
                 fn = "%s/%s" % (uploadpath, relpath)
                 import_build_log(fn, binfo, subdir=key)
+
+    ensure_volume_symlink(binfo)
+
     koji.plugin.run_callbacks('postImport', type='build', srpm=srpm, rpms=rpms, brmap=brmap,
                               task_id=task_id, build_id=build_id, build=binfo, logs=logs)
     return binfo
@@ -5727,6 +5797,7 @@ class CG_Importer(object):
                 self.import_log(self.buildinfo, fileinfo)
             else:
                 self.import_archive(self.buildinfo, brinfo, fileinfo)
+        ensure_volume_symlink(self.buildinfo)
 
 
     def prep_archive(self, fileinfo):
@@ -9272,7 +9343,7 @@ class RootExports(object):
         context.session.assertPerm('admin')
         _tag_build(tag, build, force=force)
         if notify:
-            tag_notification(True, None, tag, build, context.session.user_id)
+            tag_notification(True, tag, None, build, context.session.user_id)
 
     def tagBuild(self, tag, build, force=False, fromtag=None):
         """Request that a build be tagged
@@ -11958,6 +12029,7 @@ class HostExports(object):
 
 
         self.importImage(task_id, build_id, results)
+        ensure_volume_symlink(build_info)
 
         st_complete = koji.BUILD_STATES['COMPLETE']
         koji.plugin.run_callbacks('preBuildStateChange', attribute='state', old=build_info['state'], new=st_complete, info=build_info)
@@ -12081,6 +12153,8 @@ class HostExports(object):
 
         if rpm_results:
             _import_wrapper(rpm_results['task_id'], build_info, rpm_results)
+
+        ensure_volume_symlink(build_info)
 
         # update build state
         st_complete = koji.BUILD_STATES['COMPLETE']
@@ -12222,6 +12296,8 @@ class HostExports(object):
 
         if rpm_results:
             _import_wrapper(rpm_results['task_id'], build_info, rpm_results)
+
+        ensure_volume_symlink(build_info)
 
         # update build state
         st_complete = koji.BUILD_STATES['COMPLETE']

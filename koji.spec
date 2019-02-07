@@ -1,5 +1,5 @@
-# Enable Python 3 builds for Fedora
-%if 0%{?fedora}
+# Enable Python 3 builds for Fedora/RHEL8
+%if 0%{?fedora} || 0%{?rhel} >= 8
 %bcond_without python3
 # If the definition isn't available for python3_pkgversion, define it
 %{?!python3_pkgversion:%global python3_pkgversion 3}
@@ -31,7 +31,7 @@
 %define release %{baserelease}
 %endif
 Name: koji
-Version: 1.16.0
+Version: 1.16.1
 Release: %{release}%{?dist}
 License: LGPLv2
 Summary: Build system tools
@@ -277,7 +277,7 @@ make DESTDIR=$RPM_BUILD_ROOT PYTHON=python3 %{?install_opt} install
 cd ../plugins
 make DESTDIR=$RPM_BUILD_ROOT PYTHON=python3 %{?install_opt} install
 # alter python interpreter in koji CLI
-sed -i 's/\#\!\/usr\/bin\/python/\#\!\/usr\/bin\/python3/' $RPM_BUILD_ROOT/usr/bin/koji
+sed -i 's/\#\!\/usr\/bin\/python2/\#\!\/usr\/bin\/python3/' $RPM_BUILD_ROOT/usr/bin/koji
 %endif
 
 %clean
@@ -467,6 +467,21 @@ fi
 %endif
 
 %changelog
+* Fri Aug 17 2018 Franz Chih-Ping Hsieh <chsieh@redhat.com> - 1.16.1-1
+- PR#1041: fix utf-8 output in CLI
+- PR#1000: Fix target handling in make_task
+- PR#997: Fix rpmdiff's ignoring of size
+- PR#1030: Create symlinks for builds imported onto non-default volumes
+- PR#1008: decode_args(): make a copy of the opts dict, rather than modifying it in-place
+- PR#962: put source target scratch into policy_data in make_task
+- PR#973: Check empty arches before spawning dist-repo
+- PR#959: fix wrong tagNotification in tagBuildBypass API
+- PR#969: Enable python3 on RHEL8 build
+- PR#952: cli: [clone-tag] preserve build order
+- PR#948: cli: don't show license for external RPM in rpminfo
+- PR#879: cli: change bad reference in clone-tag
+- PR#946: force using python2 to run script
+
 * Tue May 15 2018 Mike McLean <mikem at redhat.com> - 1.16.0-1
 - Fix CVE-2018-1002150 - distRepoMove missing access check
 - PR#884: Add option to configure DB port
