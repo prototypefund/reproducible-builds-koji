@@ -15,7 +15,7 @@
 %define release %{baserelease}
 %endif
 Name: koji
-Version: 1.11.0
+Version: 1.11.1
 Release: %{release}%{?dist}
 License: LGPLv2 and GPLv2+
 # koji.ssl libs (from plague) are GPLv2+
@@ -350,6 +350,9 @@ fi
 %endif
 
 %changelog
+* Thu Feb 21 2019 Mike McLean <mikem at redhat.com> - 1.11.1-1
+- Fix CVE-2018-1002161: SQL injection in multiple remote calls
+
 * Thu Dec  8 2016 Mike McLean <mikem at redhat.com> - 1.11.0-1
 - content generator support
 - generic build type support (btypes)
