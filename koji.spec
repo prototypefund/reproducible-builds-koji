@@ -31,7 +31,7 @@
 %define release %{baserelease}
 %endif
 Name: koji
-Version: 1.15.1
+Version: 1.15.2
 Release: %{release}%{?dist}
 License: LGPLv2 and GPLv2+
 # koji.ssl libs (from plague) are GPLv2+
@@ -478,6 +478,9 @@ fi
 %endif
 
 %changelog
+* Thu Feb 21 2019 Mike McLean <mikem at redhat.com> - 1.15.2-1
+- Fix CVE-2018-1002161: SQL injection in multiple remote calls
+
 * Thu Mar 29 2018 Mike McLean <mikem at redhat.com> - 1.15.1-1
 - Backport fix for CVE-2018-1002150
 - Backport PR#848: use subprocess.Popen instead of subprocess.check_output
