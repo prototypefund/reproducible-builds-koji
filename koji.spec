@@ -31,7 +31,7 @@
 %define release %{baserelease}
 %endif
 Name: koji
-Version: 1.16.1
+Version: 1.16.2
 Release: %{release}%{?dist}
 License: LGPLv2
 Summary: Build system tools
@@ -467,6 +467,9 @@ fi
 %endif
 
 %changelog
+* Thu Feb 21 2019 Mike McLean <mikem at redhat.com> - 1.16.2-1
+- Fix CVE-2018-1002161: SQL injection in multiple remote calls
+
 * Fri Aug 17 2018 Franz Chih-Ping Hsieh <chsieh@redhat.com> - 1.16.1-1
 - PR#1041: fix utf-8 output in CLI
 - PR#1000: Fix target handling in make_task
