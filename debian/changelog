@@ -1,3 +1,9 @@
+koji (1.16.2-1) unstable; urgency=medium
+
+  * New upstream version, fixing CVE-2018-1002161. Closes: #922922
+
+ -- Holger Levsen <holger@debian.org>  Sun, 24 Feb 2019 19:44:30 +0100
+
 koji (1.16.1-1) unstable; urgency=medium
 
   * New upstream version.
