@@ -3,9 +3,11 @@ Author: Marek Marczykowski-Górecki <marmarek@invisiblethingslab.com>
 Forwarded: not-needed
 ---
 This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
---- a/builder/Makefile
-+++ b/builder/Makefile
-@@ -19,8 +19,8 @@
+Index: koji/builder/Makefile
+===================================================================
+--- koji.orig/builder/Makefile
++++ koji/builder/Makefile
+@@ -19,8 +19,8 @@ _install:
  	mkdir -p $(DESTDIR)/usr/sbin
  	install -p -m 755 $(BINFILES) $(DESTDIR)/usr/sbin
  
@@ -16,25 +18,16 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
  
  	mkdir -p $(DESTDIR)/etc/mock/koji
  
---- a/builder/kojid
-+++ b/builder/kojid
-@@ -5113,7 +5113,7 @@
-         if self.options.use_createrepo_c:
+Index: koji/builder/kojid
+===================================================================
+--- koji.orig/builder/kojid
++++ koji/builder/kojid
+@@ -5340,7 +5340,7 @@ class CreaterepoTask(BaseTaskHandler):
+         elif self.options.use_createrepo_c:
              cmd = ['/usr/bin/mergerepo_c', '--koji']
          else:
 -            cmd = ['/usr/libexec/kojid/mergerepos']
 +            cmd = ['/usr/lib/koji/libexec/kojid/mergerepos']
              cmd.extend(['--tempdir', self.workdir])
-         cmd.extend(['-a', arch, '-b', blocklist, '-o', self.outdir])
-         if os.path.isfile(groupdata):
---- a/hub/Makefile
-+++ b/hub/Makefile
-@@ -22,7 +22,7 @@
- 		exit 1; \
- 	fi
- 
--	mkdir -p $(DESTDIR)/usr/libexec/koji-hub
-+	mkdir -p $(DESTDIR)/usr/lib/koji/libexec/koji-hub
- 
- 	mkdir -p $(DESTDIR)/etc/httpd/conf.d
- 	install -p -m 644 httpd.conf $(DESTDIR)/etc/httpd/conf.d/kojihub.conf
+         if merge_mode != 'bare':
+             blocklist = self.repodir + '/blocklist'

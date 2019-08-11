@@ -2,4 +2,3 @@
 0002-Move-files-from-usr-libexec-to-usr-lib-koji-libexec.patch
 0003-Make-kojikamid-executable.patch
 0004-disable-multilib.patch
-0005-posix-sh-syntax.sh
