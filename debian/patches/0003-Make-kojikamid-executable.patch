@@ -1,0 +1,17 @@
+Description: Make kojikamid executable
+ Files with a shebang are meant to be executed directly.
+Author: Marek Marczykowski-Górecki <marmarek@invisiblethingslab.com>
+Forwarded: no
+---
+This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
+--- a/vm/Makefile
++++ b/vm/Makefile
+@@ -22,7 +22,7 @@
+ 	install -p -m 755 $(BINFILES) $(DESTDIR)/usr/sbin
+ 
+ 	mkdir -p $(DESTDIR)/usr/share/kojivmd
+-	install -p -m 644 $(SHAREFILES) $(DESTDIR)/usr/share/kojivmd
++	install -p -m 755 $(SHAREFILES) $(DESTDIR)/usr/share/kojivmd
+ 
+ 	mkdir -p $(DESTDIR)/etc/kojivmd
+ 	install -p -m 644 kojivmd.conf $(DESTDIR)/etc/kojivmd/kojivmd.conf
