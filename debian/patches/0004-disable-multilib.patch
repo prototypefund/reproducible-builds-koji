@@ -1,18 +1,20 @@
---- a/builder/kojid
-+++ b/builder/kojid
-@@ -37,7 +37,7 @@
- from koji.daemon import incremental_upload, log_output, TaskManager, SCM
- from koji.tasks import ServerExit, ServerRestart, BaseTaskHandler, MultiPlatformTask
- from koji.util import parseStatus, isSuccess, dslice, dslice_ex
--import multilib.multilib as multilib
-+#import multilib.multilib as multilib
- import os
- import pwd
- import grp
-@@ -5336,6 +5336,7 @@
-                     % parseStatus(status, ' '.join(cmd)))
+Index: koji/builder/kojid
+===================================================================
+--- koji.orig/builder/kojid
++++ koji/builder/kojid
+@@ -52,7 +52,7 @@ from fnmatch import fnmatch
+ from gzip import GzipFile
+ from optparse import OptionParser, SUPPRESS_HELP
  
-     def do_multilib(self, arch, ml_arch, conf):
+-from multilib import multilib
++#from multilib import multilib
+ import koji
+ import koji.arch
+ import koji.plugin
+@@ -5572,6 +5572,7 @@ class createDistRepoTask(BaseTaskHandler
+ 
+ 
+     def do_multilib_dnf(self, arch, ml_arch, conf):
 +        raise RuntimeError("multilib is not yet supported when running kojid on Debian, patches welcome")
          repodir = koji.pathinfo.distrepo(self.rinfo['id'], self.rinfo['tag_name'])
          mldir = os.path.join(repodir, koji.canonArch(ml_arch))
