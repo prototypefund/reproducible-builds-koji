@@ -1,3 +1,4 @@
 0001-Fail-the-build-when-pkg-config-is-missing.patch
 0002-Move-files-from-usr-libexec-to-usr-lib-koji-libexec.patch
 0003-Make-kojikamid-executable.patch
+0004-CVE-2017-1002153.patch

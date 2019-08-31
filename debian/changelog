@@ -1,3 +1,11 @@
+koji (1.10.0-1+deb9u1) UNRELEASED; urgency=medium
+
+  * Team upload.
+  * Add patch based on upstream commit ba7b5a3cbe to fix CVE-2017-1002153, to
+    properly validate SCM pathes. Closes: #877921.
+
+ -- Holger Levsen <holger@debian.org>  Sat, 31 Aug 2019 19:23:53 +0200
+
 koji (1.10.0-1) unstable; urgency=medium
 
   [ Marek Marczykowski-Górecki ]
