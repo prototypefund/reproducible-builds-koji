@@ -3,6 +3,7 @@ koji (1.18.0-1) UNRELEASED; urgency=medium
   * New upstream release.
   * Refresh patches, drop 0005-posix-sh-syntax.sh as this has been fixed
     upstream.
+  * Remove myself from uploaders.
 
  -- Holger Levsen <holger@debian.org>  Sun, 11 Aug 2019 14:30:40 +0200
 
